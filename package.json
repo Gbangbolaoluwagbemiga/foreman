@@ -1,0 +1,22 @@
+{
+  "name": "foreman",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Give your AI a budget and a goal. It hires other AIs, pays each per task in USDC on Arc, and brings you the work plus a receipt.",
+  "scripts": {
+    "demo": "tsx src/demo.ts",
+    "serve": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "groq-sdk": "^0.9.1",
+    "viem": "^2.21.55"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
