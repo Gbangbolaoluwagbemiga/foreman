@@ -1,13 +1,21 @@
 import "dotenv/config";
 import { defineChain } from "viem";
 
+/**
+ * Resolve the Arc RPC, preferring Canteen's authenticated endpoint ($RPC, set by
+ * `arc-canteen login` → `source ~/.arc-canteen/env`). The token is a secret and
+ * lives only in ~/.arc-canteen/env — never commit it.
+ */
+export const rpcUrl =
+  process.env.RPC ?? process.env.ARC_RPC_URL ?? "https://rpc.drpc.testnet.arc.network";
+
 /** Arc Testnet — Circle's stablecoin-native L1. USDC is the native currency (6 decimals). */
 export const arcTestnet = defineChain({
   id: Number(process.env.ARC_CHAIN_ID ?? 5042002),
   name: "Arc Testnet",
   nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
   rpcUrls: {
-    default: { http: [process.env.ARC_RPC_URL ?? "https://rpc.drpc.testnet.arc.network"] },
+    default: { http: [rpcUrl] },
   },
   blockExplorers: {
     default: { name: "Arcscan", url: "https://testnet.arcscan.app" },
