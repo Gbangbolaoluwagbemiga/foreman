@@ -70,9 +70,12 @@ key for real reasoning; fund a wallet and set `SETTLEMENT_RAIL=arc-usdc` for rea
 - **2026-06-15 — First autonomous job end-to-end (mock).** Foreman plans → hires 4 crew → pays each → assembles deliverable → returns itemized receipt with change. Caught & fixed a budget bug that starved the core task.
 - **2026-06-15 — Real Groq brain online.** Crew produce real work (research, copy, etc.); reputation persists and compounds across jobs.
 - **2026-06-15 — Live node shipped.** `npm run serve` → browser dashboard with real-time SSE stream of decisions, payments, and the crew/reputation table.
+- **2026-06-15 — Crew collaborate.** Deliverables chain as context: the proofreader edits the copywriter's actual lines and SEO builds on the refined copy. A real multi-agent pipeline, not isolated workers.
+- **2026-06-15 — Published to GitHub.** Repo live (private during build); each milestone committed.
 
 ### Next up
-- Chain crew outputs as context (so e.g. the proofreader edits the copy, not the brief).
 - Real USDC settlement on Arc (`arc-usdc` rail) once a wallet is funded from Circle's faucet.
 - Circle Programmable Wallets + Gateway/x402 (locks the Circle tool-usage score).
+- Report progress via ARC-cli (`update traction` / `update product`) throughout the event.
+- Recursive subcontracting (crew that hire crew) + an always-on swarm for continuous on-chain volume.
 - On-chain reputation; staking/slashing; self-serve crew listing.

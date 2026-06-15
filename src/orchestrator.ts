@@ -50,6 +50,7 @@ export async function runJob(job: JobRequest, deps: ForemanDeps): Promise<Receip
 
   const lineItems: LineItem[] = [];
   const skipped: Receipt["skipped"] = [];
+  const priorWork: string[] = [];
   let spent = 0;
 
   // Cheapest available price per skill — used to reserve budget for later subtasks
@@ -74,7 +75,9 @@ export async function runJob(job: JobRequest, deps: ForemanDeps): Promise<Receip
     }
 
     say(`🤝 Hiring ${hire.name} for ${subtask.skill} — $${hire.priceUsdc.toFixed(2)} (rep ${hire.reputation})`);
-    const deliverable = await runCrewTask(hire, subtask.description);
+    const context = priorWork.length ? priorWork.join("\n\n") : undefined;
+    const deliverable = await runCrewTask(hire, subtask.description, context);
+    priorWork.push(`[${subtask.skill} by ${hire.name}]\n${deliverable}`);
 
     const payment = await settlement.pay({
       from: foreman,

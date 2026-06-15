@@ -97,17 +97,28 @@ export class CrewRegistry {
   }
 }
 
-/** Run a crew member's skill on a task — real Groq if configured, else a mock deliverable. */
-export async function runCrewTask(member: CrewMember, task: string): Promise<string> {
+/**
+ * Run a crew member's skill on a task — real Groq if configured, else a mock deliverable.
+ * `context` carries the work delivered by earlier crew so downstream specialists
+ * actually build on it (e.g. the proofreader edits the copy, not the brief).
+ */
+export async function runCrewTask(
+  member: CrewMember,
+  task: string,
+  context?: string,
+): Promise<string> {
   const groq = getGroq();
   if (!groq) {
-    return `[${member.name}·${member.skill}] ${task} → delivered (mock).`;
+    return `[${member.name}·${member.skill}] ${task}${context ? " (built on prior crew's work)" : ""} → delivered (mock).`;
   }
+  const userContent = context
+    ? `${task}\n\n--- Work already delivered by earlier crew (use this as your input) ---\n${context}`
+    : task;
   const completion = await groq.chat.completions.create({
     model: config.groqModel,
     messages: [
       { role: "system", content: member.systemPrompt },
-      { role: "user", content: task },
+      { role: "user", content: userContent },
     ],
     temperature: 0.6,
     max_tokens: 600,
