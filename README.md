@@ -72,11 +72,12 @@ key for real reasoning; fund a wallet and set `SETTLEMENT_RAIL=arc-usdc` for rea
 - **2026-06-15 — Live node shipped.** `npm run serve` → browser dashboard with real-time SSE stream of decisions, payments, and the crew/reputation table.
 - **2026-06-15 — Crew collaborate.** Deliverables chain as context: the proofreader edits the copywriter's actual lines and SEO builds on the refined copy. A real multi-agent pipeline, not isolated workers.
 - **2026-06-15 — Published to GitHub.** Repo live (private during build); each milestone committed.
-- **2026-06-16 — Real x402 payments.** Crew are now x402 sellers (`HTTP 402 Payment Required`); the Foreman pays per call by signing an **EIP-3009 USDC authorization**, verified cryptographically by the seller before work is released. Run it: `npm run x402`. Only the on-chain broadcast (Circle Gateway batching) remains to wire.
+- **2026-06-16 — Real x402 payments.** Crew are now x402 sellers (`HTTP 402 Payment Required`); the Foreman pays per call by signing an **EIP-3009 USDC authorization**, verified cryptographically by the seller before work is released. Run it: `npm run x402`.
+- **2026-06-16 — Circle Gateway settlement wired.** Crew run as live x402 sellers behind **Circle Gateway** (`createGatewayMiddleware`, testnet facilitator); the Foreman pays via `GatewayClient` (`deposit` → `pay`), settling real sub-cent USDC on Arc through **Gateway batching**. Compiles against `@circle-fin/x402-batching` v3.1.2. Run: `npm run gateway` (needs a faucet-funded wallet). Using Canteen's authenticated Arc RPC.
 
 ### Next up
-- Circle Gateway batching to broadcast the verified x402 settlements on-chain (sub-cent economics).
-- Circle Programmable Wallets for the agent fleet (locks the Circle tool-usage score).
+- Fund a wallet from the Circle faucet → first real on-chain USDC nanopayment.
+- Circle Programmable Wallets for the agent fleet.
 - Report progress via ARC-cli (`update traction` / `update product`) throughout the event.
 - Report progress via ARC-cli (`update traction` / `update product`) throughout the event.
 - Recursive subcontracting (crew that hire crew) + an always-on swarm for continuous on-chain volume.
