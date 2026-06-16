@@ -31,6 +31,7 @@ export default function RunPage() {
   const [logs, setLogs] = useState<string[]>([]);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showBreakdown, setShowBreakdown] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const { address } = useAccount();
 
@@ -42,6 +43,7 @@ export default function RunPage() {
       else if (e.type === "job-start") {
         setLogs([`▶ new job: ${e.goal}`]);
         setReceipt(null);
+        setShowBreakdown(false);
       } else if (e.type === "receipt") {
         setReceipt(e.receipt);
         setBusy(false);
@@ -146,32 +148,40 @@ export default function RunPage() {
             <Rendered text={receipt.result} />
           </div>
 
-          {/* How it was made — the crew breakdown */}
-          <div className="px-5 py-3 text-xs uppercase tracking-wide text-muted">How it was made</div>
-          <div className="divide-y divide-edge">
-            {receipt.lineItems.map((li, i) => (
-              <div key={i} className="px-5 py-4">
-                <div className="flex items-center gap-3 text-sm">
-                  <span className="font-medium">{li.crew}</span>
-                  <span className="text-muted">{li.skill}</span>
-                  <span className="font-mono text-accent">${li.priceUsdc.toFixed(2)}</span>
-                  <span className="ml-auto font-mono text-xs text-muted">
+          {/* How it was made — collapsible, horizontal crew cards */}
+          <button
+            onClick={() => setShowBreakdown((s) => !s)}
+            className="flex w-full items-center gap-2 border-t border-edge px-5 py-3 text-xs uppercase tracking-wide text-muted hover:text-ink"
+          >
+            <span>{showBreakdown ? "▾" : "▸"}</span> How it was made
+            <span className="font-mono normal-case opacity-70">· {receipt.lineItems.length} agent{receipt.lineItems.length > 1 ? "s" : ""} paid</span>
+          </button>
+          {showBreakdown && (
+            <div className="flex gap-4 overflow-x-auto px-5 pb-5">
+              {receipt.lineItems.map((li, i) => (
+                <div key={i} className="flex w-[320px] flex-shrink-0 flex-col rounded-lg border border-edge bg-panel2">
+                  <div className="flex items-center gap-2 border-b border-edge px-4 py-2.5 text-sm">
+                    <span className="font-medium">{li.crew}</span>
+                    <span className="text-xs text-muted">{li.skill}</span>
+                    <span className="ml-auto font-mono text-accent">${li.priceUsdc.toFixed(2)}</span>
+                  </div>
+                  <div className="max-h-72 overflow-y-auto px-4 py-3">
+                    <Rendered text={li.deliverable} />
+                  </div>
+                  <div className="border-t border-edge px-4 py-2 font-mono text-[11px] text-muted">
                     {li.paymentRef.startsWith("0x") ? (
                       <a href={`${ARCSCAN}/tx/${li.paymentRef}`} target="_blank" rel="noreferrer" className="text-accent hover:underline">
-                        {li.paymentRef.slice(0, 10)}… ↗
+                        {li.paymentRef.slice(0, 12)}… ↗
                       </a>
                     ) : (
                       `[${li.paymentRef}]`
                     )}{" "}
                     · rep {li.reputationAfter}
-                  </span>
+                  </div>
                 </div>
-                <div className="mt-2">
-                  <Rendered text={li.deliverable} />
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
