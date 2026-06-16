@@ -76,7 +76,12 @@ export default function RunPage() {
       <h1 className="text-2xl font-semibold">Run a job</h1>
       <p className="mt-2 text-muted">Give the Foreman a goal and a budget. Watch it hire and pay a crew, live.</p>
 
-      <div className="mt-6 grid gap-5 lg:grid-cols-2">
+      {/* Compact balance + fund bar */}
+      <div className="mt-6">
+        <ForemanWallet />
+      </div>
+
+      <div className="mt-5 grid gap-5 lg:grid-cols-2">
         {/* Input */}
         <div className="rounded-xl border border-edge bg-panel p-5">
           <label className="text-xs uppercase tracking-wide text-muted">Goal</label>
@@ -122,11 +127,6 @@ export default function RunPage() {
             )}
           </div>
         </div>
-      </div>
-
-      {/* The wallet that pays */}
-      <div className="mt-5">
-        <ForemanWallet />
       </div>
 
       {/* Receipt */}
