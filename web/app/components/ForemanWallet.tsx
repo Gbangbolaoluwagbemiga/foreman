@@ -10,7 +10,7 @@ import { USDC, arcTestnet } from "@/lib/wagmi";
 
 /**
  * Your Foreman account: what you deposited, spent, and have left — plus an
- * overdraft (10% of your lifetime spend) the agent extends when your balance is 0.
+ * overdraft (a % of your lifetime spend) the agent extends when your balance is 0.
  */
 export function ForemanWallet() {
   const [info, setInfo] = useState<ForemanInfo | null>(null);
