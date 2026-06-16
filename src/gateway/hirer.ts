@@ -11,17 +11,26 @@ export function gatewayHire(gateway: GatewayClient, crewBaseUrl: string): Hirer 
     // External registered agents are paid at their own x402 endpoint (cross-boundary);
     // hosted agents are paid at our crew server. Either way, USDC settles to their wallet.
     const url = member.endpointUrl || `${crewBaseUrl}/crew/${member.id}`;
-    const result = await gateway.pay<{ deliverable?: string }>(url, {
-      method: "POST",
-      body: { task, context },
-    });
-    // result.transaction is the real on-chain settlement tx hash (Gateway batch) —
-    // surface it so every payment is verifiable on Arcscan.
-    const ref = result.transaction?.startsWith("0x") ? result.transaction : `gw:${result.formattedAmount}`;
-    return {
-      deliverable: result.data?.deliverable ?? "(delivered by external agent)",
-      paymentRef: ref,
-      amountUsdc: Number(result.formattedAmount),
-    };
+    try {
+      const result = await gateway.pay<{ deliverable?: string }>(url, {
+        method: "POST",
+        body: { task, context },
+      });
+      // result.transaction is the real on-chain settlement tx hash (Gateway batch) —
+      // surface it so every payment is verifiable on Arcscan.
+      const ref = result.transaction?.startsWith("0x") ? result.transaction : `gw:${result.formattedAmount}`;
+      return {
+        deliverable: result.data?.deliverable ?? "(delivered by external agent)",
+        paymentRef: ref,
+        amountUsdc: Number(result.formattedAmount),
+      };
+    } catch (e) {
+      // A flaky external/registered endpoint must never crash the job — no pay, no charge.
+      return {
+        deliverable: `⚠ ${member.name} was unavailable: ${((e as Error).message.split("\n")[0] ?? "error").slice(0, 80)}`,
+        paymentRef: "unpaid",
+        amountUsdc: 0,
+      };
+    }
   };
 }
