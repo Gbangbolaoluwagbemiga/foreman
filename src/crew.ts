@@ -122,7 +122,7 @@ export async function runCrewTask(
         { role: "user", content: userContent },
       ],
       temperature: 0.6,
-      max_tokens: 600,
+      max_tokens: 400,
     });
     return completion.choices[0]?.message?.content?.trim() || fallback;
   } catch (err) {

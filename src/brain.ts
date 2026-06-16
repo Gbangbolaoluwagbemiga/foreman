@@ -38,7 +38,7 @@ budgetShare values should sum to ~1. Order subtasks logically (e.g. research bef
           { role: "user", content: `Goal: ${goal}` },
         ],
         temperature: 0.4,
-        max_tokens: 700,
+        max_tokens: 400,
         response_format: { type: "json_object" },
       });
       const text = completion.choices[0]?.message?.content?.trim() ?? "";
