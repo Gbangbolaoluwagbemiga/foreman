@@ -64,6 +64,8 @@ export function ForemanWallet() {
   const agentAddr = info?.address;
   const connected = mounted && isConnected;
   const owed = account?.owed ?? 0;
+  // Derive the credit rate from the engine so the label never drifts from the logic.
+  const creditRate = account && account.spent > 0 ? Math.round((account.creditLimit / account.spent) * 100) : 30;
 
   const fund = async () => {
     setNote("");
@@ -132,7 +134,7 @@ export function ForemanWallet() {
                   <span className="text-warn">overdraft ${owed.toFixed(2)} / ${account.creditLimit.toFixed(2)} — repay anytime</span>
                 ) : (
                   <span className="text-muted">
-                    credit available <span className="text-accent">${(account.creditAvailable ?? 0).toFixed(2)}</span> <span className="opacity-60">(10% of spend)</span>
+                    credit available <span className="text-accent">${(account.creditAvailable ?? 0).toFixed(2)}</span> <span className="opacity-60">({creditRate}% of spend)</span>
                   </span>
                 )}
               </div>
