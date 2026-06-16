@@ -59,7 +59,9 @@ export default function RunPage() {
       const r = await runJob(goal, budget);
       if (!r.ok) {
         setBusy(false);
-        setLogs((l) => [...l, `❌ ${(await r.json()).error ?? r.status}`]);
+        const body = await r.json().catch(() => null);
+        const msg = body?.error ?? r.status;
+        setLogs((l) => [...l, `❌ ${msg}`]);
       }
     } catch {
       setBusy(false);
