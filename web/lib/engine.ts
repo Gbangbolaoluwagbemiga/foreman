@@ -64,6 +64,17 @@ export interface ForemanInfo {
 }
 export const getForeman = () => get<ForemanInfo>("/foreman");
 
+export async function withdrawForeman(amount: string) {
+  const r = await fetch(`${ENGINE}/foreman/withdraw`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ amount }),
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error ?? `withdraw failed (${r.status})`);
+  return body as { ok: boolean; withdrew: string };
+}
+
 export const getStats = () => get<Stats>("/stats");
 export const getCrew = () => get<{ members: CrewMember[] }>("/crew").then((d) => d.members);
 export const getActivity = () => get<{ ledger: LedgerItem[] }>("/activity").then((d) => d.ledger);

@@ -2,21 +2,25 @@
 
 import { useEffect, useState } from "react";
 import { erc20Abi, parseUnits } from "viem";
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
-import { ARCSCAN, getForeman, type ForemanInfo } from "@/lib/engine";
+import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { ARCSCAN, getForeman, withdrawForeman, type ForemanInfo } from "@/lib/engine";
 import { USDC, arcTestnet } from "@/lib/wagmi";
 
 /**
  * The wallet that pays the crew. The Foreman is an autonomous agent that HOLDS
- * its own funds — connect your wallet and top it up once, then it transacts on
- * its own. (No MetaMask per payment — that's the whole point of agentic payments.)
+ * its own funds: connect your wallet, top it up once, and it transacts on its own.
+ * Funds are never locked — withdraw the Gateway balance back to the wallet anytime.
  */
 export function ForemanWallet() {
   const [info, setInfo] = useState<ForemanInfo | null>(null);
   const [amount, setAmount] = useState("1");
   const [mounted, setMounted] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [note, setNote] = useState("");
 
   const { isConnected } = useAccount();
+  const chainId = useChainId();
+  const { switchChainAsync } = useSwitchChain();
   const { writeContract, data: txHash, isPending, error } = useWriteContract();
   const { isLoading: confirming, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
 
@@ -30,14 +34,34 @@ export function ForemanWallet() {
 
   if (!info) return null;
 
-  const fund = () => {
-    writeContract({
-      address: USDC,
-      abi: erc20Abi,
-      functionName: "transfer",
-      args: [info.address as `0x${string}`, parseUnits(amount || "0", 6)],
-      chainId: arcTestnet.id,
-    });
+  const fund = async () => {
+    setNote("");
+    try {
+      // The wallet must be on Arc Testnet to send Arc USDC — switch/add it first.
+      if (chainId !== arcTestnet.id) await switchChainAsync({ chainId: arcTestnet.id });
+      writeContract({
+        address: USDC,
+        abi: erc20Abi,
+        functionName: "transfer",
+        args: [info.address as `0x${string}`, parseUnits(amount || "0", 6)],
+        chainId: arcTestnet.id,
+      });
+    } catch (e) {
+      setNote((e as Error).message.split("\n")[0].slice(0, 80));
+    }
+  };
+
+  const withdraw = async () => {
+    setWithdrawing(true);
+    setNote("");
+    try {
+      const r = await withdrawForeman(amount || "0");
+      setNote(`Withdrew ${r.withdrew} USDC from Gateway → agent wallet`);
+    } catch (e) {
+      setNote((e as Error).message);
+    } finally {
+      setWithdrawing(false);
+    }
   };
 
   return (
@@ -51,20 +75,18 @@ export function ForemanWallet() {
       </a>
       <div className="mt-3 flex gap-6 text-sm">
         <div>
-          <div className="text-xs text-muted">wallet</div>
+          <div className="text-xs text-muted" title="Idle USDC in the agent's wallet, not yet deposited to Gateway">wallet (idle)</div>
           <div className="font-mono text-ink">{info.walletUsdc ?? "—"} <span className="text-xs text-muted">USDC</span></div>
         </div>
         <div>
-          <div className="text-xs text-muted">in gateway</div>
+          <div className="text-xs text-muted" title="Deposited into Circle Gateway — this is the spendable balance the agent pays the crew from">in gateway (spendable)</div>
           <div className="font-mono text-accent">{info.gatewayAvailable ?? "—"} <span className="text-xs text-muted">USDC</span></div>
         </div>
       </div>
 
-      {/* Fund from your connected wallet */}
       <div className="mt-4 border-t border-edge pt-4">
         {!mounted ? null : isConnected ? (
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-muted">Top up this agent:</span>
             <input
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
@@ -72,14 +94,15 @@ export function ForemanWallet() {
             />
             <span className="text-xs text-muted">USDC</span>
             <button onClick={fund} disabled={isPending || confirming} className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-[#04130c] disabled:opacity-50">
-              {isPending ? "Confirm in wallet…" : confirming ? "Sending…" : "Fund Foreman"}
+              {isPending ? "Confirm in wallet…" : confirming ? "Funding…" : "Fund Foreman"}
+            </button>
+            <button onClick={withdraw} disabled={withdrawing} className="rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-xs hover:border-accent/40 disabled:opacity-50">
+              {withdrawing ? "Withdrawing…" : "Withdraw from Gateway"}
             </button>
             {isSuccess && txHash && (
-              <a href={`${ARCSCAN}/tx/${txHash}`} target="_blank" rel="noreferrer" className="text-xs text-accent hover:underline">
-                funded ✓ ↗
-              </a>
+              <a href={`${ARCSCAN}/tx/${txHash}`} target="_blank" rel="noreferrer" className="text-xs text-accent hover:underline">funded ✓ ↗</a>
             )}
-            {error && <span className="text-xs text-warn">⚠ {error.message.split("\n")[0].slice(0, 60)}</span>}
+            {(note || error) && <span className="text-xs text-warn">⚠ {note || error?.message.split("\n")[0].slice(0, 70)}</span>}
           </div>
         ) : (
           <p className="text-xs text-muted">
@@ -88,7 +111,8 @@ export function ForemanWallet() {
           </p>
         )}
         <p className="mt-3 text-xs text-muted">
-          This autonomous agent pays the crew from its own balance.
+          The agent pays the crew from its <span className="text-ink">Gateway</span> balance. Idle wallet USDC is auto-deposited
+          before a job; withdraw pulls it back out — funds are never locked.
           {info.rail !== "gateway" && " (mock rail — live balances show on the gateway rail.)"}
         </p>
       </div>

@@ -37,6 +37,7 @@ let gatewayClient:
       address: string;
       getUsdcBalance: () => Promise<{ formatted: string }>;
       getBalances: () => Promise<{ gateway: { formattedAvailable: string } }>;
+      withdraw: (amount: string) => Promise<{ formattedAmount: string }>;
     }
   | undefined;
 let mockSettlement: MockSettlement | undefined;
@@ -177,6 +178,24 @@ const server = http.createServer((req, res) => {
     for (const e of log) res.write(`data: ${JSON.stringify(e)}\n\n`);
     clients.add(res);
     req.on("close", () => clients.delete(res));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/foreman/withdraw") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      if (!gatewayClient) return json({ error: "withdraw is only available on the gateway rail" }, 400);
+      void (async () => {
+        try {
+          const { amount } = JSON.parse(body || "{}");
+          const r = await gatewayClient!.withdraw(String(amount || "0"));
+          broadcast({ type: "log", msg: `🏧 Withdrew ${r.formattedAmount} USDC from Gateway → agent wallet`, ts: Date.now() });
+          json({ ok: true, withdrew: r.formattedAmount });
+        } catch (e) {
+          json({ error: (e as Error).message }, 500);
+        }
+      })();
+    });
     return;
   }
   if (req.method === "POST" && url.pathname === "/register") {
