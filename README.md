@@ -75,9 +75,13 @@ key for real reasoning; fund a wallet and set `SETTLEMENT_RAIL=arc-usdc` for rea
 - **2026-06-16 — Real x402 payments.** Crew are now x402 sellers (`HTTP 402 Payment Required`); the Foreman pays per call by signing an **EIP-3009 USDC authorization**, verified cryptographically by the seller before work is released. Run it: `npm run x402`.
 - **2026-06-16 — Circle Gateway settlement wired.** Crew run as live x402 sellers behind **Circle Gateway** (`createGatewayMiddleware`, testnet facilitator); the Foreman pays via `GatewayClient` (`deposit` → `pay`), settling real sub-cent USDC on Arc through **Gateway batching**. Compiles against `@circle-fin/x402-batching` v3.1.2. Run: `npm run gateway` (needs a faucet-funded wallet). Using Canteen's authenticated Arc RPC.
 
+- **2026-06-16 — First real on-chain payment.** Foreman paid Quill **0.3 USDC, settled on Arc via Gateway batching** — a fully autonomous agent-to-agent payment, no human in the loop. `npm run gateway`.
+- **2026-06-16 — Whole flow on real money.** Orchestrator refactored to a rail-agnostic `Hirer`; the full multi-crew job (plan → hire several → pay each in USDC) now runs on real Circle Gateway. `npm run gateway:job`.
+
 ### Next up
-- Fund a wallet from the Circle faucet → first real on-chain USDC nanopayment.
-- Circle Programmable Wallets for the agent fleet.
+- Always-on swarm: many Foremen + crew transacting continuously → real on-chain volume (the traction axis).
+- Recursive subcontracting (crew that hire crew) → multi-hop payment chains.
+- Surface real Gateway payments live on the dashboard.
 - Report progress via ARC-cli (`update traction` / `update product`) throughout the event.
 - Report progress via ARC-cli (`update traction` / `update product`) throughout the event.
 - Recursive subcontracting (crew that hire crew) + an always-on swarm for continuous on-chain volume.

@@ -76,9 +76,8 @@ export function startCrewServer(registry: CrewRegistry, port: number): Promise<h
       });
       if (!proceed) return;
 
-      const task = (preq.body as { task?: string })?.task ?? "";
-      const deliverable = await runCrewTask(member, task);
-      registry.recordOutcome(member.id, true);
+      const body = preq.body as { task?: string; context?: string };
+      const deliverable = await runCrewTask(member, body?.task ?? "", body?.context);
       if (!res.writableEnded) {
         res.setHeader("Content-Type", "application/json");
         res.end(JSON.stringify({ deliverable, payment: preq.payment }));

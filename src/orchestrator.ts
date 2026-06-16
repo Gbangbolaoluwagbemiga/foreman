@@ -1,5 +1,5 @@
 import { decompose, chooseCrew } from "./brain";
-import { runCrewTask, type CrewRegistry } from "./crew";
+import { runCrewTask, type CrewMember, type CrewRegistry } from "./crew";
 import type { AgentSigner } from "./signer";
 import type { Settlement } from "./settlement";
 
@@ -28,11 +28,48 @@ export interface Receipt {
   result: string;
 }
 
+/** Result of hiring a crew member: the work done + how it was paid for. */
+export interface HireResult {
+  deliverable: string;
+  paymentRef: string;
+  amountUsdc: number;
+}
+
+/**
+ * A way to hire + pay a crew member for a task. This is the seam that lets the
+ * SAME Foreman loop run on mock settlement OR real Circle Gateway nanopayments.
+ */
+export type Hirer = (
+  member: CrewMember,
+  task: string,
+  context?: string,
+) => Promise<HireResult>;
+
 export interface ForemanDeps {
   registry: CrewRegistry;
-  settlement: Settlement;
-  foreman: AgentSigner;
+  /** Local signer for the mock rail. Not needed when a custom `hire` is given. */
+  foreman?: AgentSigner;
+  /** Default rail: builds a mock hirer if `hire` isn't supplied. */
+  settlement?: Settlement;
+  /** Override the payment rail — e.g. real Circle Gateway (see gateway/hirer.ts). */
+  hire?: Hirer;
+  /** Label shown on the receipt. Defaults to the settlement rail. */
+  rail?: string;
   onEvent?: (msg: string) => void;
+}
+
+/** Default hirer: run the work locally (Groq) and settle via the given rail. */
+function mockHire(deps: { settlement: Settlement; foreman: AgentSigner }): Hirer {
+  return async (member, task, context) => {
+    const deliverable = await runCrewTask(member, task, context);
+    const payment = await deps.settlement.pay({
+      from: deps.foreman,
+      to: member.signer.address,
+      amountUsdc: member.priceUsdc,
+      memo: task.slice(0, 40),
+    });
+    return { deliverable, paymentRef: payment.ref, amountUsdc: member.priceUsdc };
+  };
 }
 
 /**
@@ -41,8 +78,17 @@ export interface ForemanDeps {
  * once it has a goal and a budget.
  */
 export async function runJob(job: JobRequest, deps: ForemanDeps): Promise<Receipt> {
-  const { registry, settlement, foreman } = deps;
+  const { registry } = deps;
   const say = deps.onEvent ?? (() => {});
+
+  const hire =
+    deps.hire ??
+    (deps.settlement && deps.foreman
+      ? mockHire({ settlement: deps.settlement, foreman: deps.foreman })
+      : (() => {
+          throw new Error("runJob needs `hire`, or both `settlement` and `foreman`");
+        })());
+  const rail = deps.rail ?? deps.settlement?.rail ?? "custom";
 
   say(`🧠 Foreman planning: "${job.goal}" (budget $${job.budgetUsdc.toFixed(2)})`);
   const subtasks = await decompose(job.goal, registry.skills());
@@ -66,35 +112,29 @@ export async function runJob(job: JobRequest, deps: ForemanDeps): Promise<Receip
     // Reserve the minimum needed to still afford every later subtask.
     const reserve = subtasks.slice(i + 1).reduce((sum, s) => sum + cheapest(s.skill), 0);
     const subtaskBudget = Math.max(0, remaining - reserve);
-    const hire = chooseCrew(subtask, subtaskBudget, registry);
+    const chosen = chooseCrew(subtask, subtaskBudget, registry);
 
-    if (!hire) {
+    if (!chosen) {
       skipped.push({ skill: subtask.skill, reason: `no crew within $${subtaskBudget.toFixed(2)}` });
       say(`⚠️  Skipped ${subtask.skill}: nothing affordable within $${subtaskBudget.toFixed(2)}`);
       continue;
     }
 
-    say(`🤝 Hiring ${hire.name} for ${subtask.skill} — $${hire.priceUsdc.toFixed(2)} (rep ${hire.reputation})`);
+    say(`🤝 Hiring ${chosen.name} for ${subtask.skill} — $${chosen.priceUsdc.toFixed(2)} (rep ${chosen.reputation})`);
     const context = priorWork.length ? priorWork.join("\n\n") : undefined;
-    const deliverable = await runCrewTask(hire, subtask.description, context);
-    priorWork.push(`[${subtask.skill} by ${hire.name}]\n${deliverable}`);
+    const { deliverable, paymentRef, amountUsdc } = await hire(chosen, subtask.description, context);
+    priorWork.push(`[${subtask.skill} by ${chosen.name}]\n${deliverable}`);
 
-    const payment = await settlement.pay({
-      from: foreman,
-      to: hire.signer.address,
-      amountUsdc: hire.priceUsdc,
-      memo: `${subtask.skill}: ${subtask.description.slice(0, 40)}`,
-    });
-    spent += hire.priceUsdc;
-    registry.recordOutcome(hire.id, true);
-    const updated = registry.members.find((m) => m.id === hire.id)!;
-    say(`💸 Paid ${hire.name} $${hire.priceUsdc.toFixed(2)} USDC [${payment.ref}] — rep → ${updated.reputation}`);
+    spent += amountUsdc;
+    registry.recordOutcome(chosen.id, true);
+    const updated = registry.members.find((m) => m.id === chosen.id)!;
+    say(`💸 Paid ${chosen.name} $${amountUsdc.toFixed(2)} USDC [${paymentRef}] — rep → ${updated.reputation}`);
 
     lineItems.push({
-      crew: hire.name,
+      crew: chosen.name,
       skill: subtask.skill,
-      priceUsdc: hire.priceUsdc,
-      paymentRef: payment.ref,
+      priceUsdc: amountUsdc,
+      paymentRef,
       reputationAfter: updated.reputation,
       deliverable,
     });
@@ -106,7 +146,7 @@ export async function runJob(job: JobRequest, deps: ForemanDeps): Promise<Receip
     budgetUsdc: job.budgetUsdc,
     spentUsdc: Number(spent.toFixed(6)),
     changeUsdc: Number((job.budgetUsdc - spent).toFixed(6)),
-    rail: settlement.rail,
+    rail,
     lineItems,
     skipped,
     result,

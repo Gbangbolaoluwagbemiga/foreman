@@ -43,11 +43,30 @@ async function main() {
     return;
   }
 
-  // Ensure some Gateway balance to spend from.
-  if (balances.gateway.available < 100_000n) {
-    console.log("\n  Depositing $0.50 into Circle Gateway…");
-    const dep = await gateway.deposit("0.5");
+  const quill = registry.members.find((m) => m.name === "Quill")!;
+  const priceUnits = BigInt(Math.round(quill.priceUsdc * 1e6));
+
+  // Ensure spendable Gateway balance. A deposit lands on-chain immediately but
+  // takes a few seconds to be credited as "available" by the facilitator — so
+  // deposit if needed, then POLL until the balance actually lands before paying.
+  if (balances.gateway.available < priceUnits) {
+    console.log("\n  Depositing $1.00 into Circle Gateway…");
+    const dep = await gateway.deposit("1");
     console.log(`  deposited ${dep.formattedAmount} USDC  [${dep.depositTxHash.slice(0, 12)}…]`);
+
+    const start = Date.now();
+    let available = (await gateway.getBalances()).gateway.available;
+    while (available < priceUnits && Date.now() - start < 90_000) {
+      await new Promise((r) => setTimeout(r, 3000));
+      available = (await gateway.getBalances()).gateway.available;
+      console.log(`  …waiting for Gateway to credit the deposit (available: ${(Number(available) / 1e6).toFixed(2)} USDC)`);
+    }
+    if (available < priceUnits) {
+      console.log("  ⚠️  Deposit not yet available after 90s — it usually lands shortly. Re-run `npm run gateway`.");
+      server.close();
+      return;
+    }
+    console.log(`  ✓ Gateway balance available: ${(Number(available) / 1e6).toFixed(2)} USDC`);
   }
 
   const url = `http://localhost:${PORT}/crew/quill`;
