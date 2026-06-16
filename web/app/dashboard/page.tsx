@@ -37,10 +37,12 @@ export default function DashboardPage() {
         {stats && <span className="font-mono text-xs text-muted">rail: {stats.rail} · brain: {stats.brain}</span>}
       </div>
 
-      <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-3">
         <StatCard label="Volume settled" value={`$${(stats?.volumeUsdc ?? 0).toFixed(2)}`} sub="USDC on Arc" />
         <StatCard label="Payments" value={String(stats?.payments ?? 0)} sub="agent → agent" />
         <StatCard label="Jobs" value={String(stats?.jobs ?? 0)} sub="completed" />
+        <StatCard label="Credit extended" value={`$${(stats?.creditExtended ?? 0).toFixed(2)}`} sub="credit lines issued" />
+        <StatCard label="Agent accounts" value={String(stats?.accounts ?? 0)} sub="with a balance" />
         <StatCard label="Throughput" value={stats ? `${paymentsPerMin(stats)}/min` : "—"} sub="payments / min" />
       </div>
 

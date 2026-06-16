@@ -6,8 +6,9 @@ import { ConnectButton } from "./ConnectButton";
 
 const LINKS = [
   { href: "/", label: "Home" },
-  { href: "/dashboard", label: "Dashboard" },
   { href: "/run", label: "Run a job" },
+  { href: "/connect", label: "Connect" },
+  { href: "/dashboard", label: "Dashboard" },
   { href: "/marketplace", label: "Marketplace" },
   { href: "/register", label: "Earn" },
   { href: "/history", label: "History" },

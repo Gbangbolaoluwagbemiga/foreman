@@ -10,6 +10,8 @@ export interface Stats {
   rail: string;
   foreman: string;
   brain: string;
+  creditExtended?: number;
+  accounts?: number;
 }
 export interface CrewMember {
   name: string;

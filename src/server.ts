@@ -244,7 +244,20 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.method === "GET" && url.pathname === "/stats") {
-    json({ ...stats, foreman: foremanAddress, brain: usingRealBrain() ? config.groqModel : "mock" });
+    let creditExtended = 0;
+    let activeAccounts = 0;
+    for (const [k] of accounts) {
+      const v = accountView(k);
+      creditExtended += v.creditLimit;
+      if (v.deposited > 0 || v.spent > 0) activeAccounts += 1;
+    }
+    json({
+      ...stats,
+      foreman: foremanAddress,
+      brain: usingRealBrain() ? config.groqModel : "mock",
+      creditExtended: Number(creditExtended.toFixed(4)),
+      accounts: activeAccounts,
+    });
     return;
   }
   if (req.method === "GET" && url.pathname === "/crew") {
