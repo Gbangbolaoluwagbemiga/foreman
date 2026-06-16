@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ARCSCAN, ENGINE, runJob } from "@/lib/engine";
 import { LiveDot } from "../components/ui";
 import { Rendered } from "../components/Rendered";
+import { ForemanWallet } from "../components/ForemanWallet";
 
 interface LineItem {
   crew: string;
@@ -121,6 +122,11 @@ export default function RunPage() {
             )}
           </div>
         </div>
+      </div>
+
+      {/* The wallet that pays */}
+      <div className="mt-5">
+        <ForemanWallet />
       </div>
 
       {/* Receipt */}

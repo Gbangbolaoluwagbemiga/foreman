@@ -31,6 +31,14 @@ const ledger: Array<{ ts: number; crew: string; skill: string; amountUsdc: numbe
 
 let hireFn: Hirer | undefined; // gateway rail
 let beforeRun: (() => Promise<void>) | undefined;
+// Structural type so the mock rail never imports the Circle SDK.
+let gatewayClient:
+  | {
+      address: string;
+      getUsdcBalance: () => Promise<{ formatted: string }>;
+      getBalances: () => Promise<{ gateway: { formattedAvailable: string } }>;
+    }
+  | undefined;
 let mockSettlement: MockSettlement | undefined;
 let mockForeman = createLocalSigner();
 let foremanAddress = mockForeman.address;
@@ -146,6 +154,21 @@ const server = http.createServer((req, res) => {
     json({ ledger });
     return;
   }
+  if (req.method === "GET" && url.pathname === "/foreman") {
+    void (async () => {
+      if (gatewayClient) {
+        try {
+          const [u, b] = await Promise.all([gatewayClient.getUsdcBalance(), gatewayClient.getBalances()]);
+          json({ address: foremanAddress, rail: RAIL, walletUsdc: u.formatted, gatewayAvailable: b.gateway.formattedAvailable });
+        } catch (e) {
+          json({ address: foremanAddress, rail: RAIL, walletUsdc: null, gatewayAvailable: null, error: (e as Error).message });
+        }
+      } else {
+        json({ address: foremanAddress, rail: RAIL, walletUsdc: null, gatewayAvailable: null });
+      }
+    })();
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/events") {
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
     res.write(`data: ${JSON.stringify({ type: "hello", rail: RAIL, brain: usingRealBrain() ? config.groqModel : "mock", foreman: foremanAddress })}\n\n`);
@@ -213,6 +236,7 @@ async function start() {
     await startCrewServer(registry, CREW_PORT);
     const gateway = createForemanGateway((config.foremanPrivateKey || generatePrivateKey()) as `0x${string}`);
     foremanAddress = gateway.address;
+    gatewayClient = gateway;
     hireFn = gatewayHire(gateway, `http://localhost:${CREW_PORT}`);
 
     // Keep enough Gateway balance for a job before each run.

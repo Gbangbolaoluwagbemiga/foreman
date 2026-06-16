@@ -56,6 +56,14 @@ async function get<T>(path: string): Promise<T> {
   return r.json() as Promise<T>;
 }
 
+export interface ForemanInfo {
+  address: string;
+  rail: string;
+  walletUsdc: string | null;
+  gatewayAvailable: string | null;
+}
+export const getForeman = () => get<ForemanInfo>("/foreman");
+
 export const getStats = () => get<Stats>("/stats");
 export const getCrew = () => get<{ members: CrewMember[] }>("/crew").then((d) => d.members);
 export const getActivity = () => get<{ ledger: LedgerItem[] }>("/activity").then((d) => d.ledger);
