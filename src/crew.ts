@@ -107,21 +107,28 @@ export async function runCrewTask(
   task: string,
   context?: string,
 ): Promise<string> {
+  const fallback = `[${member.name}·${member.skill}] ${task}${context ? " (built on prior crew's work)" : ""} → delivered (offline).`;
   const groq = getGroq();
-  if (!groq) {
-    return `[${member.name}·${member.skill}] ${task}${context ? " (built on prior crew's work)" : ""} → delivered (mock).`;
-  }
+  if (!groq) return fallback;
+
   const userContent = context
     ? `${task}\n\n--- Work already delivered by earlier crew (use this as your input) ---\n${context}`
     : task;
-  const completion = await groq.chat.completions.create({
-    model: config.groqModel,
-    messages: [
-      { role: "system", content: member.systemPrompt },
-      { role: "user", content: userContent },
-    ],
-    temperature: 0.6,
-    max_tokens: 600,
-  });
-  return completion.choices[0]?.message?.content?.trim() ?? "(no output)";
+  try {
+    const completion = await groq.chat.completions.create({
+      model: config.groqModel,
+      messages: [
+        { role: "system", content: member.systemPrompt },
+        { role: "user", content: userContent },
+      ],
+      temperature: 0.6,
+      max_tokens: 600,
+    });
+    return completion.choices[0]?.message?.content?.trim() || fallback;
+  } catch (err) {
+    // Brain unavailable (rate limit / network) — never crash the economy mid-job.
+    const reason = err instanceof Error ? err.message.split("\n")[0] : "unknown";
+    console.warn(`  [crew] ${member.name} brain unavailable, delivering offline (${reason})`);
+    return fallback;
+  }
 }

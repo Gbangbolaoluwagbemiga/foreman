@@ -30,23 +30,23 @@ export async function decompose(
 Each subtask MUST use a skill from this list: ${availableSkills.join(", ")}.
 Return ONLY JSON: {"subtasks":[{"skill":"<one of the list>","description":"<what to do>","budgetShare":<0..1>}]}
 budgetShare values should sum to ~1. Order subtasks logically (e.g. research before writing).`;
-    const completion = await client.chat.completions.create({
-      model: config.groqModel,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: `Goal: ${goal}` },
-      ],
-      temperature: 0.4,
-      max_tokens: 700,
-      response_format: { type: "json_object" },
-    });
-    const text = completion.choices[0]?.message?.content?.trim() ?? "";
     try {
+      const completion = await client.chat.completions.create({
+        model: config.groqModel,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: `Goal: ${goal}` },
+        ],
+        temperature: 0.4,
+        max_tokens: 700,
+        response_format: { type: "json_object" },
+      });
+      const text = completion.choices[0]?.message?.content?.trim() ?? "";
       const parsed = JSON.parse(text) as { subtasks?: Subtask[] };
       const valid = (parsed.subtasks ?? []).filter((s) => availableSkills.includes(s.skill));
       if (valid.length > 0) return normalizeShares(valid);
     } catch {
-      /* fall through to mock */
+      // Brain unavailable (rate limit / bad JSON) — fall back to the heuristic plan.
     }
   }
   return mockDecompose(goal, availableSkills);

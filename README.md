@@ -80,9 +80,11 @@ key for real reasoning; fund a wallet and set `SETTLEMENT_RAIL=arc-usdc` for rea
 
 - **2026-06-16 — Always-on swarm.** A Foreman continuously takes jobs and pays a crew, accumulating real agent-to-agent USDC volume + a compounding reputation economy (the traction axis). Real: `SWARM_RAIL=gateway npm run swarm`. Offline: `npm run swarm`.
 
+- **2026-06-16 — Recursive subcontracting + resilience.** An Agency agent that is *itself a Foreman*: it takes a fee, hires sub-crew, keeps a margin — a depth-2 payment chain and an emergent broker (RFB-03 "do broker agents emerge?"). `npm run subcontract`. Also hardened the brain + crew to degrade gracefully (offline fallback) when Groq rate-limits, so jobs and the swarm never crash mid-demo.
+
 ### Next up
-- Recursive subcontracting (crew that hire crew) → multi-hop payment chains.
-- Surface real Gateway payments + swarm volume live on the dashboard.
+- Make reputation differentiate (success-rate / decay / occasional slashing) so it stays a meaningful signal.
+- Surface real Gateway payments + swarm volume + payment chains on the live dashboard.
 - Report progress via ARC-cli (`update traction` / `update product`) throughout the event.
 - Report progress via ARC-cli (`update traction` / `update product`) throughout the event.
 - Recursive subcontracting (crew that hire crew) + an always-on swarm for continuous on-chain volume.
