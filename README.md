@@ -78,10 +78,11 @@ key for real reasoning; fund a wallet and set `SETTLEMENT_RAIL=arc-usdc` for rea
 - **2026-06-16 — First real on-chain payment.** Foreman paid Quill **0.3 USDC, settled on Arc via Gateway batching** — a fully autonomous agent-to-agent payment, no human in the loop. `npm run gateway`.
 - **2026-06-16 — Whole flow on real money.** Orchestrator refactored to a rail-agnostic `Hirer`; the full multi-crew job (plan → hire several → pay each in USDC) now runs on real Circle Gateway. `npm run gateway:job`.
 
+- **2026-06-16 — Always-on swarm.** A Foreman continuously takes jobs and pays a crew, accumulating real agent-to-agent USDC volume + a compounding reputation economy (the traction axis). Real: `SWARM_RAIL=gateway npm run swarm`. Offline: `npm run swarm`.
+
 ### Next up
-- Always-on swarm: many Foremen + crew transacting continuously → real on-chain volume (the traction axis).
 - Recursive subcontracting (crew that hire crew) → multi-hop payment chains.
-- Surface real Gateway payments live on the dashboard.
+- Surface real Gateway payments + swarm volume live on the dashboard.
 - Report progress via ARC-cli (`update traction` / `update product`) throughout the event.
 - Report progress via ARC-cli (`update traction` / `update product`) throughout the event.
 - Recursive subcontracting (crew that hire crew) + an always-on swarm for continuous on-chain volume.
