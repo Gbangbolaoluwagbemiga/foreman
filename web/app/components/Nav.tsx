@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { ConnectButton } from "./ConnectButton";
 
 const LINKS = [
   { href: "/", label: "Home" },
@@ -36,6 +37,9 @@ export function Nav() {
               </Link>
             );
           })}
+          <span className="ml-2">
+            <ConnectButton />
+          </span>
         </nav>
       </div>
     </header>

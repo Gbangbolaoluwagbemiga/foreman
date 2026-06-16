@@ -1,6 +1,7 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import { Nav } from "./components/Nav";
+import { Providers } from "./providers";
 
 export const metadata: Metadata = {
   title: "Foreman — agents that hire & pay agents on Arc",
@@ -12,8 +13,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
-        <Nav />
-        <main className="mx-auto max-w-6xl px-5 pb-24">{children}</main>
+        <Providers>
+          <Nav />
+          <main className="mx-auto max-w-6xl px-5 pb-24">{children}</main>
+        </Providers>
       </body>
     </html>
   );

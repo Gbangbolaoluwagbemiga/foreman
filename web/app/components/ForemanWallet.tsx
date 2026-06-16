@@ -1,17 +1,26 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { erc20Abi, parseUnits } from "viem";
+import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { ARCSCAN, getForeman, type ForemanInfo } from "@/lib/engine";
+import { USDC, arcTestnet } from "@/lib/wagmi";
 
 /**
  * The wallet that pays the crew. The Foreman is an autonomous agent that HOLDS
- * its own funds — you top it up once, then it transacts on its own. This panel
- * makes that wallet (and how to fund it) visible.
+ * its own funds — connect your wallet and top it up once, then it transacts on
+ * its own. (No MetaMask per payment — that's the whole point of agentic payments.)
  */
 export function ForemanWallet() {
   const [info, setInfo] = useState<ForemanInfo | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [amount, setAmount] = useState("1");
+  const [mounted, setMounted] = useState(false);
 
+  const { isConnected } = useAccount();
+  const { writeContract, data: txHash, isPending, error } = useWriteContract();
+  const { isLoading: confirming, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
+
+  useEffect(() => setMounted(true), []);
   useEffect(() => {
     const load = () => getForeman().then(setInfo).catch(() => setInfo(null));
     load();
@@ -20,10 +29,15 @@ export function ForemanWallet() {
   }, []);
 
   if (!info) return null;
-  const copy = () => {
-    navigator.clipboard?.writeText(info.address);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+
+  const fund = () => {
+    writeContract({
+      address: USDC,
+      abi: erc20Abi,
+      functionName: "transfer",
+      args: [info.address as `0x${string}`, parseUnits(amount || "0", 6)],
+      chainId: arcTestnet.id,
+    });
   };
 
   return (
@@ -45,18 +59,39 @@ export function ForemanWallet() {
           <div className="font-mono text-accent">{info.gatewayAvailable ?? "—"} <span className="text-xs text-muted">USDC</span></div>
         </div>
       </div>
-      <div className="mt-4 flex gap-2">
-        <button onClick={copy} className="rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-xs hover:border-accent/40">
-          {copied ? "copied ✓" : "copy address"}
-        </button>
-        <a href="https://faucet.circle.com" target="_blank" rel="noreferrer" className="rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-xs hover:border-accent/40">
-          fund via Circle faucet ↗
-        </a>
+
+      {/* Fund from your connected wallet */}
+      <div className="mt-4 border-t border-edge pt-4">
+        {!mounted ? null : isConnected ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted">Top up this agent:</span>
+            <input
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="w-20 rounded-lg border border-edge bg-bg px-2 py-1 text-sm outline-none focus:border-accent/50"
+            />
+            <span className="text-xs text-muted">USDC</span>
+            <button onClick={fund} disabled={isPending || confirming} className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-[#04130c] disabled:opacity-50">
+              {isPending ? "Confirm in wallet…" : confirming ? "Sending…" : "Fund Foreman"}
+            </button>
+            {isSuccess && txHash && (
+              <a href={`${ARCSCAN}/tx/${txHash}`} target="_blank" rel="noreferrer" className="text-xs text-accent hover:underline">
+                funded ✓ ↗
+              </a>
+            )}
+            {error && <span className="text-xs text-warn">⚠ {error.message.split("\n")[0].slice(0, 60)}</span>}
+          </div>
+        ) : (
+          <p className="text-xs text-muted">
+            Connect your wallet (top right) to fund this agent — or grab test USDC from the{" "}
+            <a href="https://faucet.circle.com" target="_blank" rel="noreferrer" className="text-accent hover:underline">Circle faucet</a>.
+          </p>
+        )}
+        <p className="mt-3 text-xs text-muted">
+          This autonomous agent pays the crew from its own balance.
+          {info.rail !== "gateway" && " (mock rail — live balances show on the gateway rail.)"}
+        </p>
       </div>
-      <p className="mt-3 text-xs text-muted">
-        This autonomous agent pays the crew from its own balance — fund it once and it transacts on its own.
-        {info.rail !== "gateway" && " (mock rail — balances show on the gateway rail.)"}
-      </p>
     </div>
   );
 }
