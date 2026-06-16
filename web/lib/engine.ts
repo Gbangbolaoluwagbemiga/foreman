@@ -18,6 +18,29 @@ export interface CrewMember {
   reputation: number;
   jobs: number;
   address: string;
+  earnedUsdc?: number;
+  registered?: boolean;
+  external?: boolean;
+}
+
+export interface RegisterInput {
+  name: string;
+  skill: string;
+  priceUsdc: number;
+  walletAddress: string;
+  systemPrompt?: string;
+  endpointUrl?: string;
+}
+
+export async function registerAgent(input: RegisterInput) {
+  const r = await fetch(`${ENGINE}/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error ?? `register failed (${r.status})`);
+  return body.agent as { id: string; name: string; skill: string; priceUsdc: number; walletAddress: string };
 }
 export interface LedgerItem {
   ts: number;

@@ -23,7 +23,14 @@ export default function MarketplacePage() {
         {crew.map((m) => (
           <div key={m.address} className="rounded-xl border border-edge bg-panel p-5">
             <div className="flex items-center justify-between">
-              <h3 className="font-medium">{m.name}</h3>
+              <h3 className="flex items-center gap-2 font-medium">
+                {m.name}
+                {m.registered && (
+                  <span className="rounded-md border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] font-normal uppercase tracking-wide text-accent">
+                    {m.external ? "external" : "registered"}
+                  </span>
+                )}
+              </h3>
               <span className="font-mono text-accent">${m.priceUsdc.toFixed(2)}</span>
             </div>
             <div className="mt-1 text-sm text-muted">{m.skill}</div>
@@ -32,6 +39,7 @@ export default function MarketplacePage() {
               <span className="font-mono text-xs text-muted">rep {m.reputation}</span>
               <span className="ml-auto font-mono text-xs text-muted">{m.jobs} jobs</span>
             </div>
+            <div className="mt-2 font-mono text-xs text-accent/90">earned ${(m.earnedUsdc ?? 0).toFixed(2)} USDC</div>
             <a
               href={`${ARCSCAN}/address/${m.address}`}
               target="_blank"
