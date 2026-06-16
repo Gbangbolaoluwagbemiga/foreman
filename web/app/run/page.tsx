@@ -6,6 +6,7 @@ import { ARCSCAN, ENGINE, runJob } from "@/lib/engine";
 import { LiveDot } from "../components/ui";
 import { Rendered } from "../components/Rendered";
 import { ForemanWallet } from "../components/ForemanWallet";
+import { AgentControls } from "../components/AgentControls";
 
 interface LineItem {
   crew: string;
@@ -80,9 +81,10 @@ export default function RunPage() {
       <h1 className="text-2xl font-semibold">Run a job</h1>
       <p className="mt-2 text-muted">Give the Foreman a goal and a budget. Watch it hire and pay a crew, live.</p>
 
-      {/* Compact balance + fund bar */}
-      <div className="mt-6">
+      {/* Compact balance + fund bar + operator controls */}
+      <div className="mt-6 space-y-3">
         <ForemanWallet />
+        <AgentControls />
       </div>
 
       <div className="mt-5 grid gap-5 lg:grid-cols-2">

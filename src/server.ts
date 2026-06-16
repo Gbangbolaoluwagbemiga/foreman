@@ -35,16 +35,27 @@ const ledger: Array<{ ts: number; crew: string; skill: string; amountUsdc: numbe
 interface Account {
   deposited: number;
   spent: number;
+  // operator control plane
+  suspended: boolean;
+  perJobCap: number; // 0 = no cap
+  dailyCap: number; // 0 = no cap
+  dayKey: string;
+  spentToday: number;
 }
 const accounts = new Map<string, Account>();
 const history = new Map<string, Array<{ ts: number } & Receipt>>();
 const OVERDRAFT_RATE = 0.3;
+const today = () => new Date().toISOString().slice(0, 10);
 function acct(user: string): Account {
   const k = user.toLowerCase();
   let a = accounts.get(k);
   if (!a) {
-    a = { deposited: 0, spent: 0 };
+    a = { deposited: 0, spent: 0, suspended: false, perJobCap: 0, dailyCap: 0, dayKey: today(), spentToday: 0 };
     accounts.set(k, a);
+  }
+  if (a.dayKey !== today()) {
+    a.dayKey = today();
+    a.spentToday = 0;
   }
   return a;
 }
@@ -55,7 +66,21 @@ function accountView(user: string) {
   const creditLimit = Number((OVERDRAFT_RATE * a.spent).toFixed(6));
   const creditAvailable = Math.max(0, Number((creditLimit - owed).toFixed(6)));
   const spendable = Number((balance + creditAvailable).toFixed(6));
-  return { user, deposited: a.deposited, spent: a.spent, balance, owed, creditLimit, creditAvailable, spendable };
+  return {
+    user, deposited: a.deposited, spent: a.spent, balance, owed, creditLimit, creditAvailable, spendable,
+    suspended: a.suspended, perJobCap: a.perJobCap, dailyCap: a.dailyCap, spentToday: a.spentToday,
+  };
+}
+
+/** The control-plane gate: is this agent allowed to spend `budget` right now? */
+function checkSpend(user: string, budget: number): { ok: boolean; reason?: string } {
+  const a = acct(user);
+  if (a.suspended) return { ok: false, reason: "agent is suspended — the kill switch is on" };
+  if (a.perJobCap > 0 && budget > a.perJobCap) return { ok: false, reason: `exceeds the per-job cap of $${a.perJobCap.toFixed(2)}` };
+  if (a.dailyCap > 0 && a.spentToday + budget > a.dailyCap) return { ok: false, reason: `would exceed the daily cap of $${a.dailyCap.toFixed(2)} ($${a.spentToday.toFixed(2)} spent today)` };
+  const v = accountView(user);
+  if (v.spendable < budget) return { ok: false, reason: `insufficient funds: need $${budget.toFixed(2)}, have $${v.spendable.toFixed(2)} (balance $${v.balance.toFixed(2)} + credit $${v.creditAvailable.toFixed(2)})` };
+  return { ok: true };
 }
 
 let hireFn: Hirer | undefined; // gateway rail
@@ -146,15 +171,9 @@ async function handleRun(goal: string, budgetUsdc: number, user?: string) {
     return;
   }
   if (user) {
-    const v = accountView(user);
-    // Only start a job you can fully cover (cash + overdraft) so owed can never
-    // exceed your credit limit.
-    if (v.spendable < budgetUsdc) {
-      broadcast({
-        type: "log",
-        msg: `❌ Need $${budgetUsdc.toFixed(2)} but only $${v.spendable.toFixed(2)} available (balance $${v.balance.toFixed(2)} + credit $${v.creditAvailable.toFixed(2)}). ${v.owed > 0 ? `You owe $${v.owed.toFixed(2)} — repay or deposit.` : "Fund your Foreman."}`,
-        ts: Date.now(),
-      });
+    const c = checkSpend(user, budgetUsdc);
+    if (!c.ok) {
+      broadcast({ type: "log", msg: `❌ Rejected: ${c.reason}.`, ts: Date.now() });
       return;
     }
   }
@@ -178,6 +197,7 @@ async function handleRun(goal: string, budgetUsdc: number, user?: string) {
     if (user) {
       const a = acct(user);
       a.spent = Number((a.spent + receipt.spentUsdc).toFixed(6));
+      a.spentToday = Number((a.spentToday + receipt.spentUsdc).toFixed(6));
       broadcast({ type: "account", account: accountView(user), ts: Date.now() });
       const k = user.toLowerCase();
       const h = history.get(k) ?? [];
@@ -201,10 +221,8 @@ async function handleRun(goal: string, budgetUsdc: number, user?: string) {
 async function delegate(goal: string, budgetUsdc: number, user?: string): Promise<{ receipt?: Receipt; error?: string }> {
   if (running) return { error: "Foreman is busy with another job — try again in a moment." };
   if (user) {
-    const v = accountView(user);
-    if (v.spendable < budgetUsdc) {
-      return { error: `Insufficient funds: need $${budgetUsdc.toFixed(2)}, have $${v.spendable.toFixed(2)} (balance $${v.balance.toFixed(2)} + credit $${v.creditAvailable.toFixed(2)}). Fund the Foreman account.` };
-    }
+    const c = checkSpend(user, budgetUsdc);
+    if (!c.ok) return { error: c.reason };
   }
   const receipt = await handleRun(goal, budgetUsdc, user);
   return receipt ? { receipt } : { error: "job failed" };
@@ -378,6 +396,26 @@ const server = http.createServer((req, res) => {
     const user = url.searchParams.get("user") ?? "";
     if (!/^0x[0-9a-fA-F]{40}$/.test(user)) return json({ error: "valid user address required" }, 400);
     json(accountView(user));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/account/controls") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      try {
+        const { user, suspended, perJobCap, dailyCap } = JSON.parse(body || "{}");
+        if (!/^0x[0-9a-fA-F]{40}$/.test(String(user ?? ""))) return json({ error: "valid user address required" }, 400);
+        const a = acct(String(user));
+        if (typeof suspended === "boolean") a.suspended = suspended;
+        if (perJobCap !== undefined && Number.isFinite(Number(perJobCap))) a.perJobCap = Math.max(0, Number(perJobCap));
+        if (dailyCap !== undefined && Number.isFinite(Number(dailyCap))) a.dailyCap = Math.max(0, Number(dailyCap));
+        broadcast({ type: "log", msg: a.suspended ? `🛑 Agent suspended (kill switch ON)` : `🎛️ Controls updated — per-job $${a.perJobCap}, daily $${a.dailyCap}`, ts: Date.now() });
+        broadcast({ type: "account", account: accountView(String(user)), ts: Date.now() });
+        json(accountView(String(user)));
+      } catch {
+        json({ error: "bad json" }, 400);
+      }
+    });
     return;
   }
   if (req.method === "POST" && url.pathname === "/account/deposit") {

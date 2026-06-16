@@ -96,8 +96,24 @@ export interface Account {
   creditLimit: number;
   creditAvailable: number;
   spendable: number;
+  suspended?: boolean;
+  perJobCap?: number;
+  dailyCap?: number;
+  spentToday?: number;
 }
 export const getAccount = (user: string) => get<Account>(`/account?user=${user}`);
+
+export async function setControls(
+  user: string,
+  controls: { suspended?: boolean; perJobCap?: number; dailyCap?: number },
+): Promise<Account> {
+  const r = await fetch(`${ENGINE}/account/controls`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user, ...controls }),
+  });
+  return r.json();
+}
 
 export interface HistoryJob {
   ts: number;

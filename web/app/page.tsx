@@ -4,10 +4,10 @@ import { AgentMesh } from "./components/AgentMesh";
 import { LiveStats } from "./components/LiveStats";
 
 const STEPS = [
-  { icon: Brain, title: "Give it a goal + budget", body: "“Write a launch campaign for my coffee shop. Budget $1.” That's the whole input." },
-  { icon: Users, title: "It hires a crew", body: "The Foreman plans the work and picks specialist AIs by price and on-chain reputation." },
-  { icon: Coins, title: "Pays each in USDC on Arc", body: "Every task settles as a real sub-cent nanopayment via Circle Gateway — no human in the loop." },
-  { icon: ReceiptText, title: "Returns work + receipt", body: "You get the finished deliverable and an itemized, on-chain record of who did what." },
+  { icon: Brain, title: "Connect any agent", body: "Claude Code, Cursor, or your own bot plugs into Foreman over MCP — and gets a spending account on Arc." },
+  { icon: Coins, title: "It pays for what it needs", body: "The agent discovers + pays specialists/tools per task in USDC on Arc via Circle Gateway — no API keys, no shared cards." },
+  { icon: Users, title: "It earns a credit line", body: "The longer it behaves and pays reliably, the more credit Foreman extends. On-chain track record = creditworthiness." },
+  { icon: ReceiptText, title: "You stay in control", body: "Budgets, per-job & daily caps, a one-tap kill switch, and a full on-chain audit of every cent." },
 ];
 
 const CREW_MARQUEE = ["Quill · copywriting", "Scout · research", "Muse · image-prompt", "Polish · proofreading", "Rank · SEO", "Lint · code-review", "Digest · summarize", "Verify · fact-check"];
@@ -26,9 +26,9 @@ export default function Home() {
             Agents that <span className="shimmer">hire&nbsp;and&nbsp;pay</span> agents.
           </h1>
           <p className="mt-6 max-w-lg text-lg text-muted">
-            Foreman is an AI general contractor. Give it a budget and a goal — it hires a crew of
-            specialist AIs, pays each per task in <span className="text-ink">USDC on Arc</span>, and
-            brings back the work plus a receipt.
+            Foreman is the <span className="text-ink">spending account, credit line, and control plane</span> for
+            AI agents. Real agents (via MCP) pay for tools, data, and other agents in USDC on Arc — earning credit
+            by their track record, while you keep budgets and a kill switch.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <Link href="/run" className="glow inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-2.5 font-medium text-[#04130c] transition-transform hover:-translate-y-0.5">
@@ -81,15 +81,15 @@ export default function Home() {
 
       {/* Thesis */}
       <section className="rounded-2xl border border-edge bg-panel p-8">
-        <h2 className="text-xl font-semibold">Reputation is the escrow.</h2>
+        <h2 className="text-xl font-semibold">The first AI agent with a credit score.</h2>
         <p className="mt-3 max-w-3xl text-muted">
-          When agents pay each other fractions of a cent, traditional escrow is too heavy — the fee
-          eats the payment. Foreman flips it: pay instantly via Circle Gateway, and let on-chain{" "}
-          <span className="text-ink">reputation</span> decide who gets hired next. A market run by
-          software — discovery, payment, and a record of who delivered.
+          You wouldn't give your intern your personal credit card. Don't give your AI one either.
+          Foreman gives every agent its own account on Arc, lets it pay for what it needs autonomously,
+          and <span className="text-ink">extends it credit as it proves itself on-chain</span> — while you
+          keep budgets, caps, and a one-tap kill switch. It's Brex for the AI agent economy.
         </p>
         <div className="mt-6 flex flex-wrap gap-2 font-mono text-xs text-muted">
-          {["Circle x402", "Gateway batching", "USDC", "Arc Testnet", "Groq llama-3.3-70b"].map((t) => (
+          {["MCP", "Circle Gateway / x402", "USDC", "Arc Testnet", "credit line", "kill switch"].map((t) => (
             <span key={t} className="rounded-md border border-edge bg-panel2 px-2.5 py-1">{t}</span>
           ))}
         </div>
