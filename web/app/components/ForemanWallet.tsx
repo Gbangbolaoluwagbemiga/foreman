@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { erc20Abi, formatUnits, parseUnits } from "viem";
 import { useAccount, useChainId, useReadContract, useSwitchChain, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useAppKit } from "@reown/appkit/react";
 import { ARCSCAN, getForeman, withdrawForeman, type ForemanInfo } from "@/lib/engine";
 import { USDC, arcTestnet } from "@/lib/wagmi";
 
@@ -30,6 +31,7 @@ export function ForemanWallet() {
   });
   const yourBalance = rawBal !== undefined ? formatUnits(rawBal as bigint, 6) : null;
   const { switchChainAsync } = useSwitchChain();
+  const { open } = useAppKit();
   const { writeContract, data: txHash, isPending, error } = useWriteContract();
   const { isLoading: confirming, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
 
@@ -43,11 +45,21 @@ export function ForemanWallet() {
 
   if (!info) return null;
 
+  const gatewayAvail = Number(info.gatewayAvailable ?? 0);
+
   const fund = async () => {
     setNote("");
+    // The wallet must be on Arc Testnet to send Arc USDC — switch/add it first.
+    if (chainId !== arcTestnet.id) {
+      try {
+        await switchChainAsync({ chainId: arcTestnet.id });
+      } catch {
+        open({ view: "Networks" });
+        setNote("Switch your wallet to Arc Testnet, then Fund again.");
+        return;
+      }
+    }
     try {
-      // The wallet must be on Arc Testnet to send Arc USDC — switch/add it first.
-      if (chainId !== arcTestnet.id) await switchChainAsync({ chainId: arcTestnet.id });
       writeContract({
         address: USDC,
         abi: erc20Abi,
@@ -61,10 +73,13 @@ export function ForemanWallet() {
   };
 
   const withdraw = async () => {
-    setWithdrawing(true);
     setNote("");
+    const amt = Number(amount || 0);
+    if (amt <= 0) return setNote("Enter an amount to withdraw.");
+    if (amt > gatewayAvail) return setNote(`You can withdraw at most ${gatewayAvail.toFixed(2)} USDC (your Gateway balance).`);
+    setWithdrawing(true);
     try {
-      const r = await withdrawForeman(amount || "0");
+      const r = await withdrawForeman(String(amt));
       setNote(`Withdrew ${r.withdrew} USDC from Gateway → agent wallet`);
     } catch (e) {
       setNote((e as Error).message);
@@ -110,8 +125,13 @@ export function ForemanWallet() {
             <button onClick={fund} disabled={isPending || confirming} className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-[#04130c] disabled:opacity-50">
               {isPending ? "Confirm in wallet…" : confirming ? "Funding…" : "Fund Foreman"}
             </button>
-            <button onClick={withdraw} disabled={withdrawing} className="rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-xs hover:border-accent/40 disabled:opacity-50">
-              {withdrawing ? "Withdrawing…" : "Withdraw from Gateway"}
+            <button
+              onClick={withdraw}
+              disabled={withdrawing || gatewayAvail <= 0}
+              title={gatewayAvail <= 0 ? "Nothing deposited to withdraw" : `Up to ${gatewayAvail.toFixed(2)} USDC`}
+              className="rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-xs hover:border-accent/40 disabled:opacity-50"
+            >
+              {withdrawing ? "Withdrawing…" : `Withdraw (max ${gatewayAvail.toFixed(2)})`}
             </button>
             {isSuccess && txHash && (
               <a href={`${ARCSCAN}/tx/${txHash}`} target="_blank" rel="noreferrer" className="text-xs text-accent hover:underline">funded ✓ ↗</a>
