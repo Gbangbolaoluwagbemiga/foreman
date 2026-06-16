@@ -188,11 +188,26 @@ async function handleRun(goal: string, budgetUsdc: number, user?: string) {
     broadcast({ type: "receipt", receipt, ts: Date.now() });
     broadcast({ type: "stats", stats, ts: Date.now() });
     broadcast({ type: "crew", members: crewSnapshot(), ts: Date.now() });
+    return receipt;
   } catch (e) {
     broadcast({ type: "log", msg: `❌ ${(e as Error).message}`, ts: Date.now() });
+    return undefined;
   } finally {
     running = false;
   }
+}
+
+/** Synchronous delegate: run a job and return the receipt (for MCP / programmatic agents). */
+async function delegate(goal: string, budgetUsdc: number, user?: string): Promise<{ receipt?: Receipt; error?: string }> {
+  if (running) return { error: "Foreman is busy with another job — try again in a moment." };
+  if (user) {
+    const v = accountView(user);
+    if (v.spendable < budgetUsdc) {
+      return { error: `Insufficient funds: need $${budgetUsdc.toFixed(2)}, have $${v.spendable.toFixed(2)} (balance $${v.balance.toFixed(2)} + credit $${v.creditAvailable.toFixed(2)}). Fund the Foreman account.` };
+    }
+  }
+  const receipt = await handleRun(goal, budgetUsdc, user);
+  return receipt ? { receipt } : { error: "job failed" };
 }
 
 const server = http.createServer((req, res) => {
@@ -332,6 +347,25 @@ const server = http.createServer((req, res) => {
         json({ error: "bad json" }, 400);
       }
     });
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/delegate") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () =>
+      void (async () => {
+        try {
+          const { goal, budget, user } = JSON.parse(body || "{}");
+          const g = String(goal || "").trim();
+          if (!g) return json({ error: "goal required" }, 400);
+          const u = typeof user === "string" && /^0x[0-9a-fA-F]{40}$/.test(user) ? user : undefined;
+          const out = await delegate(g, Number(budget) || 1, u);
+          json(out, out.error ? 402 : 200);
+        } catch {
+          json({ error: "bad json" }, 400);
+        }
+      })(),
+    );
     return;
   }
   if (req.method === "GET" && url.pathname === "/history") {
