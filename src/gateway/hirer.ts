@@ -15,9 +15,12 @@ export function gatewayHire(gateway: GatewayClient, crewBaseUrl: string): Hirer 
       method: "POST",
       body: { task, context },
     });
+    // result.transaction is the real on-chain settlement tx hash (Gateway batch) —
+    // surface it so every payment is verifiable on Arcscan.
+    const ref = result.transaction?.startsWith("0x") ? result.transaction : `gw:${result.formattedAmount}`;
     return {
       deliverable: result.data?.deliverable ?? "(delivered by external agent)",
-      paymentRef: `gw:${result.formattedAmount}`,
+      paymentRef: ref,
       amountUsdc: Number(result.formattedAmount),
     };
   };

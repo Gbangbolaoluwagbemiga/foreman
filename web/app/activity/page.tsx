@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getActivity, type LedgerItem } from "@/lib/engine";
+import { ARCSCAN, getActivity, type LedgerItem } from "@/lib/engine";
 import { LiveDot } from "../components/ui";
 
 export default function ActivityPage() {
@@ -48,7 +48,15 @@ export default function ActivityPage() {
                   <td className="px-5 py-3">{p.crew}</td>
                   <td className="px-5 py-3 text-muted">{p.skill}</td>
                   <td className="px-5 py-3 text-right font-mono text-accent">${p.amountUsdc.toFixed(2)}</td>
-                  <td className="px-5 py-3 font-mono text-xs text-muted">{p.ref}</td>
+                  <td className="px-5 py-3 font-mono text-xs">
+                    {p.ref.startsWith("0x") ? (
+                      <a href={`${ARCSCAN}/tx/${p.ref}`} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                        {p.ref.slice(0, 10)}…{p.ref.slice(-6)} ↗
+                      </a>
+                    ) : (
+                      <span className="text-muted">{p.ref}</span>
+                    )}
+                  </td>
                 </tr>
               ))
             )}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ENGINE, runJob } from "@/lib/engine";
+import { ARCSCAN, ENGINE, runJob } from "@/lib/engine";
 import { LiveDot } from "../components/ui";
 import { Rendered } from "../components/Rendered";
 
@@ -147,7 +147,16 @@ export default function RunPage() {
                   <span className="font-medium">{li.crew}</span>
                   <span className="text-muted">{li.skill}</span>
                   <span className="font-mono text-accent">${li.priceUsdc.toFixed(2)}</span>
-                  <span className="ml-auto font-mono text-xs text-muted">[{li.paymentRef}] · rep {li.reputationAfter}</span>
+                  <span className="ml-auto font-mono text-xs text-muted">
+                    {li.paymentRef.startsWith("0x") ? (
+                      <a href={`${ARCSCAN}/tx/${li.paymentRef}`} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                        {li.paymentRef.slice(0, 10)}… ↗
+                      </a>
+                    ) : (
+                      `[${li.paymentRef}]`
+                    )}{" "}
+                    · rep {li.reputationAfter}
+                  </span>
                 </div>
                 <div className="mt-2">
                   <Rendered text={li.deliverable} />

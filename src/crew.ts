@@ -41,7 +41,7 @@ const SEED_CREW: Seed[] = [
     systemPrompt: "You are Quill, an expert copywriter. Produce vivid, concise, on-brand copy for the task. No preamble." },
   { name: "Muse", skill: "image-prompt", priceUsdc: 0.1, reputation: 64,
     description: "Generates a header/hero image for the brief.",
-    systemPrompt: "You are Muse. Output one rich, specific image description (style, subject, lighting, mood) in 1-2 sentences." },
+    systemPrompt: "You are Muse, an art director. Reply with ONLY a vivid visual description of the image to generate — concrete subject, setting, style, lighting, mood. One sentence, no preamble, no quotes, and do NOT restate or mention the task/brief." },
   { name: "Polish", skill: "proofreading", priceUsdc: 0.03, reputation: 78,
     description: "Fixes grammar, flow, and clarity without changing meaning.",
     systemPrompt: "You are Polish, a meticulous proofreader. Return the corrected text only — fix grammar, flow, clarity; keep meaning." },
@@ -167,7 +167,17 @@ export async function runCrewTask(member: CrewMember, task: string, context?: st
 /** The image crew GENERATES a real image (Pollinations — free, keyless). */
 function withImage(skill: string, text: string, task: string): string {
   if (skill !== "image-prompt" && skill !== "image") return text;
-  const prompt = (text && text.length > 10 ? text : task).replace(/\s+/g, " ").trim().slice(0, 320);
-  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=576`;
-  return `${text}\n\n![generated image](${url})`;
+  const offline = !text || /delivered \(offline\)/.test(text) || text.length < 15;
+  // Build a clean VISUAL prompt — never the meta-instruction (which produced nonsense).
+  let prompt = offline
+    ? task
+        .replace(/^.*?for:\s*/i, "")
+        .replace(/\b(write|develop|create|design|generate|produce|a concept for|that captures.*|appeals to.*|header image|image[- ]?prompt|the essence of)\b/gi, " ")
+        .replace(/[—–-]\s*(research|copy|copywriting|seo)\b/gi, " ")
+    : text.replace(/^here'?s?\b[^:]*:\s*/i, "").replace(/image[- ]?generation prompt:?/i, "");
+  prompt = (prompt || task).replace(/["\n]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 220);
+  const styled = `${prompt}, professional marketing header image, photographic, warm natural lighting, high detail`;
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(styled)}?width=1024&height=576&nologo=true`;
+  const caption = offline ? `Header image concept — ${prompt}` : text;
+  return `${caption}\n\n![generated image](${url})`;
 }
