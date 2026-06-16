@@ -403,7 +403,8 @@ async function start() {
 
   server.listen(PORT, () => {
     console.log(`\n  🟢 Foreman engine API → http://localhost:${PORT}   rail: ${RAIL}`);
-    console.log(`     GET /stats /crew /activity /events   POST /run\n`);
+    console.log(`     crew: ${registry.members.length} · overdraft: ${Math.round(OVERDRAFT_RATE * 100)}% · planner: smart/minimal · history: on`);
+    console.log(`     GET /stats /crew /activity /history /account /events   POST /run /register /account/deposit\n`);
   });
 }
 

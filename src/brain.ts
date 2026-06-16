@@ -16,14 +16,21 @@ export async function decompose(
   goal: string,
   availableSkills: string[],
 ): Promise<Subtask[]> {
-  const system = `You are Foreman, an AI general contractor. Hire the FEWEST specialists that genuinely satisfy the goal — often exactly ONE.
+  const system = `You are Foreman, an AI general contractor. Choose the SMALLEST set of specialists that genuinely satisfies the goal. Hire multiple agents ONLY when the goal truly spans several distinct deliverables.
+
+Skills available: ${availableSkills.join(", ")}. Each subtask must use the closest-matching skill.
+
+Examples (note how simple asks use exactly ONE agent):
+- "write a hello world in C" → {"subtasks":[{"skill":"coding","description":"Write a hello world program in C","budgetShare":1}]}
+- "translate this to French: ..." → {"subtasks":[{"skill":"translation","description":"Translate to French","budgetShare":1}]}
+- "a catchy tagline for my coffee app" → {"subtasks":[{"skill":"copywriting","description":"Write a catchy tagline","budgetShare":1}]}
+- "review this function for bugs" → {"subtasks":[{"skill":"code-review","description":"Review the code","budgetShare":1}]}
+- "a full launch campaign: market research, copy, and a header image" → {"subtasks":[{"skill":"research","description":"Research the market","budgetShare":0.3},{"skill":"copywriting","description":"Write the campaign copy","budgetShare":0.4},{"skill":"image-prompt","description":"Design a header image","budgetShare":0.3}]}
+
 Rules:
-- Match the request precisely. A simple ask ("a line of code", "translate this", "a tagline") needs ONE subtask.
-- Do NOT add research, SEO, proofreading, fact-check, or images UNLESS the goal clearly calls for them.
-- Never pad the plan to use more agents. Less is better.
-- Each subtask MUST use a skill from this list: ${availableSkills.join(", ")}. Pick the closest-matching skill.
-Return ONLY JSON: {"subtasks":[{"skill":"<one of the list>","description":"<what to do>","budgetShare":<0..1>}]}
-Use 1-4 subtasks (prefer 1-2). budgetShare values sum to ~1.`;
+- A simple, single-domain request = exactly ONE agent. Do NOT add research, code-review, proofreading, SEO, or images unless the goal explicitly needs them.
+- Never pad the plan. Fewer agents is better.
+Return ONLY JSON: {"subtasks":[{"skill","description","budgetShare"}]}. budgetShare sums to ~1.`;
   const text = await groqComplete(
     [
       { role: "system", content: system },
@@ -73,9 +80,13 @@ function mockDecompose(goal: string, skills: string[]): Subtask[] {
   const KEYWORDS: Record<string, string> = {
     code: "coding", coding: "coding", function: "coding", script: "coding", program: "coding",
     rust: "coding", python: "coding", javascript: "coding", typescript: "coding", solidity: "coding",
+    "hello world": "coding", html: "coding", css: "coding", sql: "coding", algorithm: "coding", snippet: "coding",
+    bug: "code-review", review: "code-review",
+    copy: "copywriting", tagline: "copywriting", slogan: "copywriting", headline: "copywriting",
+    campaign: "copywriting", blog: "copywriting", tweet: "copywriting", email: "copywriting", caption: "copywriting",
     translate: "translation", summarize: "summarization", summary: "summarization",
-    image: "image-prompt", logo: "image-prompt", banner: "image-prompt",
-    seo: "seo", proofread: "proofreading", "fact-check": "fact-check", review: "code-review",
+    image: "image-prompt", logo: "image-prompt", banner: "image-prompt", picture: "image-prompt",
+    seo: "seo", proofread: "proofreading", "fact-check": "fact-check",
   };
   const named = skills.filter((s) => g.includes(s.replace(/-/g, " ")) || g.includes(s));
   const fromKeywords = Object.entries(KEYWORDS).filter(([k]) => g.includes(k)).map(([, v]) => v);
