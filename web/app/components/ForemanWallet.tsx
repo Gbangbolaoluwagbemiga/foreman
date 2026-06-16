@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { erc20Abi, parseUnits } from "viem";
-import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { erc20Abi, formatUnits, parseUnits } from "viem";
+import { useAccount, useChainId, useReadContract, useSwitchChain, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { ARCSCAN, getForeman, withdrawForeman, type ForemanInfo } from "@/lib/engine";
 import { USDC, arcTestnet } from "@/lib/wagmi";
 
@@ -18,8 +18,17 @@ export function ForemanWallet() {
   const [withdrawing, setWithdrawing] = useState(false);
   const [note, setNote] = useState("");
 
-  const { isConnected } = useAccount();
+  const { address, isConnected } = useAccount();
   const chainId = useChainId();
+  const { data: rawBal } = useReadContract({
+    address: USDC,
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: address ? [address] : undefined,
+    chainId: arcTestnet.id,
+    query: { enabled: !!address, refetchInterval: 8000 },
+  });
+  const yourBalance = rawBal !== undefined ? formatUnits(rawBal as bigint, 6) : null;
   const { switchChainAsync } = useSwitchChain();
   const { writeContract, data: txHash, isPending, error } = useWriteContract();
   const { isLoading: confirming, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
@@ -87,6 +96,11 @@ export function ForemanWallet() {
       <div className="mt-4 border-t border-edge pt-4">
         {!mounted ? null : isConnected ? (
           <div className="flex flex-wrap items-center gap-2">
+            {yourBalance !== null && (
+              <span className="mr-1 text-xs text-muted">
+                your balance: <span className="font-mono text-ink">{Number(yourBalance).toFixed(2)}</span> USDC
+              </span>
+            )}
             <input
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
