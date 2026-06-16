@@ -29,6 +29,34 @@ const log: unknown[] = [];
 const stats = { jobs: 0, payments: 0, volumeUsdc: 0, startedAt: Date.now(), rail: RAIL };
 const ledger: Array<{ ts: number; crew: string; skill: string; amountUsdc: number; ref: string }> = [];
 
+// ── Per-user accounts: each connected wallet has its own deposits/spend, plus an
+// overdraft (credit line) worth 10% of lifetime spend — repay anytime. The agent's
+// on-chain funds are pooled; this ledger attributes them per user.
+interface Account {
+  deposited: number;
+  spent: number;
+}
+const accounts = new Map<string, Account>();
+const OVERDRAFT_RATE = 0.1;
+function acct(user: string): Account {
+  const k = user.toLowerCase();
+  let a = accounts.get(k);
+  if (!a) {
+    a = { deposited: 0, spent: 0 };
+    accounts.set(k, a);
+  }
+  return a;
+}
+function accountView(user: string) {
+  const a = acct(user);
+  const balance = Math.max(0, Number((a.deposited - a.spent).toFixed(6)));
+  const owed = Math.max(0, Number((a.spent - a.deposited).toFixed(6)));
+  const creditLimit = Number((OVERDRAFT_RATE * a.spent).toFixed(6));
+  const creditAvailable = Math.max(0, Number((creditLimit - owed).toFixed(6)));
+  const spendable = Number((balance + creditAvailable).toFixed(6));
+  return { user, deposited: a.deposited, spent: a.spent, balance, owed, creditLimit, creditAvailable, spendable };
+}
+
 let hireFn: Hirer | undefined; // gateway rail
 let beforeRun: (() => Promise<void>) | undefined;
 // Structural type so the mock rail never imports the Circle SDK.
@@ -111,10 +139,23 @@ function saveRegistered() {
   }
 }
 
-async function handleRun(goal: string, budgetUsdc: number) {
+async function handleRun(goal: string, budgetUsdc: number, user?: string) {
   if (running) {
     broadcast({ type: "log", msg: "⏳ a job is already running", ts: Date.now() });
     return;
+  }
+  if (user) {
+    const v = accountView(user);
+    // Only start a job you can fully cover (cash + overdraft) so owed can never
+    // exceed your credit limit.
+    if (v.spendable < budgetUsdc) {
+      broadcast({
+        type: "log",
+        msg: `❌ Need $${budgetUsdc.toFixed(2)} but only $${v.spendable.toFixed(2)} available (balance $${v.balance.toFixed(2)} + credit $${v.creditAvailable.toFixed(2)}). ${v.owed > 0 ? `You owe $${v.owed.toFixed(2)} — repay or deposit.` : "Fund your Foreman."}`,
+        ts: Date.now(),
+      });
+      return;
+    }
   }
   running = true;
   broadcast({ type: "job-start", goal, budgetUsdc, ts: Date.now() });
@@ -133,6 +174,11 @@ async function handleRun(goal: string, budgetUsdc: number) {
       ledger.unshift({ ts: Date.now(), crew: li.crew, skill: li.skill, amountUsdc: li.priceUsdc, ref: li.paymentRef });
     }
     if (ledger.length > 200) ledger.length = 200;
+    if (user) {
+      const a = acct(user);
+      a.spent = Number((a.spent + receipt.spentUsdc).toFixed(6));
+      broadcast({ type: "account", account: accountView(user), ts: Date.now() });
+    }
     broadcast({ type: "receipt", receipt, ts: Date.now() });
     broadcast({ type: "stats", stats, ts: Date.now() });
     broadcast({ type: "crew", members: crewSnapshot(), ts: Date.now() });
@@ -270,11 +316,38 @@ const server = http.createServer((req, res) => {
     req.on("data", (c) => (body += c));
     req.on("end", () => {
       try {
-        const { goal, budget } = JSON.parse(body || "{}");
+        const { goal, budget, user } = JSON.parse(body || "{}");
         const g = String(goal || "").trim();
         if (!g) return json({ error: "goal required" }, 400);
-        void handleRun(g, Number(budget) || 1);
+        const u = typeof user === "string" && /^0x[0-9a-fA-F]{40}$/.test(user) ? user : undefined;
+        void handleRun(g, Number(budget) || 1, u);
         json({ ok: true }, 202);
+      } catch {
+        json({ error: "bad json" }, 400);
+      }
+    });
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/account") {
+    const user = url.searchParams.get("user") ?? "";
+    if (!/^0x[0-9a-fA-F]{40}$/.test(user)) return json({ error: "valid user address required" }, 400);
+    json(accountView(user));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/account/deposit") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      try {
+        const { user, amount } = JSON.parse(body || "{}");
+        if (!/^0x[0-9a-fA-F]{40}$/.test(String(user ?? ""))) return json({ error: "valid user address required" }, 400);
+        const amt = Number(amount);
+        if (!Number.isFinite(amt) || amt <= 0) return json({ error: "amount must be positive" }, 400);
+        const a = acct(String(user));
+        const wasOwed = Math.max(0, a.spent - a.deposited);
+        a.deposited = Number((a.deposited + amt).toFixed(6));
+        broadcast({ type: "log", msg: wasOwed > 0 ? `💵 Repaid/deposited ${amt} USDC` : `💵 Deposited ${amt} USDC to your Foreman`, ts: Date.now() });
+        json(accountView(String(user)));
       } catch {
         json({ error: "bad json" }, 400);
       }

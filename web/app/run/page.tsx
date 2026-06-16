@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useAccount } from "wagmi";
 import { ARCSCAN, ENGINE, runJob } from "@/lib/engine";
 import { LiveDot } from "../components/ui";
 import { Rendered } from "../components/Rendered";
@@ -31,6 +32,7 @@ export default function RunPage() {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [busy, setBusy] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
+  const { address } = useAccount();
 
   useEffect(() => {
     const es = new EventSource(`${ENGINE}/events`);
@@ -58,7 +60,7 @@ export default function RunPage() {
     setReceipt(null);
     setLogs(["⏳ sending job to the Foreman…"]);
     try {
-      const r = await runJob(goal, budget);
+      const r = await runJob(goal, budget, address);
       if (!r.ok) {
         setBusy(false);
         const body = await r.json().catch(() => null);

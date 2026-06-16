@@ -79,12 +79,33 @@ export const getStats = () => get<Stats>("/stats");
 export const getCrew = () => get<{ members: CrewMember[] }>("/crew").then((d) => d.members);
 export const getActivity = () => get<{ ledger: LedgerItem[] }>("/activity").then((d) => d.ledger);
 
-export function runJob(goal: string, budget: number) {
+export function runJob(goal: string, budget: number, user?: string) {
   return fetch(`${ENGINE}/run`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ goal, budget }),
+    body: JSON.stringify({ goal, budget, user }),
   });
+}
+
+export interface Account {
+  user: string;
+  deposited: number;
+  spent: number;
+  balance: number;
+  owed: number;
+  creditLimit: number;
+  creditAvailable: number;
+  spendable: number;
+}
+export const getAccount = (user: string) => get<Account>(`/account?user=${user}`);
+
+export async function reportDeposit(user: string, amount: number): Promise<Account> {
+  const r = await fetch(`${ENGINE}/account/deposit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user, amount }),
+  });
+  return r.json();
 }
 
 export function paymentsPerMin(s: Stats): string {
