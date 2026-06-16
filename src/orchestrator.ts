@@ -64,7 +64,7 @@ function mockHire(deps: { settlement: Settlement; foreman: AgentSigner }): Hirer
     const deliverable = await runCrewTask(member, task, context);
     const payment = await deps.settlement.pay({
       from: deps.foreman,
-      to: member.signer.address,
+      to: member.walletAddress,
       amountUsdc: member.priceUsdc,
       memo: task.slice(0, 40),
     });
@@ -126,7 +126,7 @@ export async function runJob(job: JobRequest, deps: ForemanDeps): Promise<Receip
     priorWork.push(`[${subtask.skill} by ${chosen.name}]\n${deliverable}`);
 
     spent += amountUsdc;
-    registry.recordOutcome(chosen.id, true);
+    registry.recordOutcome(chosen.id, true, amountUsdc);
     const updated = registry.members.find((m) => m.id === chosen.id)!;
     say(`💸 Paid ${chosen.name} $${amountUsdc.toFixed(2)} USDC [${paymentRef}] — rep → ${updated.reputation}`);
 

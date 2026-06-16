@@ -1,9 +1,13 @@
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
 import { config } from "./config";
-import { CrewRegistry, usingRealBrain } from "./crew";
+import { CrewRegistry, usingRealBrain, type RegisterInput } from "./crew";
 import { createLocalSigner } from "./signer";
 import { MockSettlement } from "./settlement";
 import { runJob, type Hirer } from "./orchestrator";
+
+const DATA_FILE = path.join(process.cwd(), "data", "registered.json");
 
 /**
  * Foreman engine API — drives the orchestrator and exposes the live economy to
@@ -53,9 +57,34 @@ function crewSnapshot() {
       priceUsdc: m.priceUsdc,
       reputation: m.reputation,
       jobs: m.jobsCompleted,
-      address: m.signer.address,
+      address: m.walletAddress,
+      earnedUsdc: m.earnedUsdc,
+      registered: !!m.registered,
+      external: !!m.endpointUrl,
     }))
     .sort((a, b) => b.reputation - a.reputation);
+}
+
+function loadRegistered() {
+  try {
+    const list = JSON.parse(fs.readFileSync(DATA_FILE, "utf8")) as RegisterInput[];
+    for (const r of list) registry.register(r);
+    if (list.length) console.log(`  loaded ${list.length} registered agent(s)`);
+  } catch {
+    /* none yet */
+  }
+}
+
+function saveRegistered() {
+  const list: RegisterInput[] = registry.members
+    .filter((m) => m.registered)
+    .map((m) => ({ name: m.name, skill: m.skill, priceUsdc: m.priceUsdc, walletAddress: m.walletAddress, systemPrompt: m.systemPrompt, endpointUrl: m.endpointUrl }));
+  try {
+    fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
+    fs.writeFileSync(DATA_FILE, JSON.stringify(list, null, 2));
+  } catch (e) {
+    console.warn("could not persist registrations:", (e as Error).message);
+  }
 }
 
 async function handleRun(goal: string, budgetUsdc: number) {
@@ -127,6 +156,32 @@ const server = http.createServer((req, res) => {
     req.on("close", () => clients.delete(res));
     return;
   }
+  if (req.method === "POST" && url.pathname === "/register") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      try {
+        const { name, skill, priceUsdc, walletAddress, systemPrompt, endpointUrl } = JSON.parse(body || "{}");
+        if (!name || !skill) return json({ error: "name and skill are required" }, 400);
+        if (!/^0x[0-9a-fA-F]{40}$/.test(String(walletAddress ?? ""))) return json({ error: "a valid wallet address is required to receive earnings" }, 400);
+        const m = registry.register({
+          name: String(name),
+          skill: String(skill),
+          priceUsdc: Number(priceUsdc) || 0.05,
+          walletAddress: String(walletAddress),
+          systemPrompt: systemPrompt ? String(systemPrompt) : undefined,
+          endpointUrl: endpointUrl ? String(endpointUrl) : undefined,
+        });
+        saveRegistered();
+        broadcast({ type: "crew", members: crewSnapshot() });
+        broadcast({ type: "log", msg: `🆕 ${m.name} registered as a ${m.skill} agent ($${m.priceUsdc}) — now hireable`, ts: Date.now() });
+        json({ ok: true, agent: { id: m.id, name: m.name, skill: m.skill, priceUsdc: m.priceUsdc, walletAddress: m.walletAddress } }, 201);
+      } catch {
+        json({ error: "bad json" }, 400);
+      }
+    });
+    return;
+  }
   if (req.method === "POST" && url.pathname === "/run") {
     let body = "";
     req.on("data", (c) => (body += c));
@@ -147,6 +202,7 @@ const server = http.createServer((req, res) => {
 });
 
 async function start() {
+  loadRegistered();
   if (RAIL === "gateway") {
     const { startCrewServer } = await import("./gateway/crewServer");
     const { createForemanGateway } = await import("./gateway/foreman");

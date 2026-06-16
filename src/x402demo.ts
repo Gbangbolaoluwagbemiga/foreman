@@ -36,7 +36,7 @@ const server = http.createServer((req, res) => {
     // No payment → ask for it (HTTP 402)
     if (!header || typeof header !== "string") {
       const reqs = buildRequirements({
-        payTo: seller.signer.address,
+        payTo: seller.walletAddress,
         amountBaseUnits: price,
         resource: "/crew/quill",
         description: `${seller.name} — ${seller.skill}`,
@@ -47,7 +47,7 @@ const server = http.createServer((req, res) => {
 
     // Payment presented → verify cryptographically
     const payment = decodePaymentHeader(header);
-    const check = await verifyPayment(payment, { payTo: seller.signer.address, minAmountBaseUnits: price });
+    const check = await verifyPayment(payment, { payTo: seller.walletAddress, minAmountBaseUnits: price });
     if (!check.ok) {
       res.writeHead(402, { "Content-Type": "application/json" }).end(JSON.stringify({ error: check.reason }));
       return;
@@ -74,7 +74,7 @@ async function main() {
   console.log("──────────────────────────────────────────────");
   console.log(`  brain: ${usingRealBrain() ? config.groqModel : "mock"}`);
   console.log(`  foreman (payer): ${foreman.address}`);
-  console.log(`  Quill (seller):  ${seller.signer.address}  price $${seller.priceUsdc.toFixed(3)}\n`);
+  console.log(`  Quill (seller):  ${seller.walletAddress}  price $${seller.priceUsdc.toFixed(3)}\n`);
 
   // 1) probe → expect 402
   const probe = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ task }) });

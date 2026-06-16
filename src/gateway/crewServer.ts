@@ -19,14 +19,20 @@ const FACILITATOR_TESTNET = "https://gateway-api-testnet.circle.com";
 export function startCrewServer(registry: CrewRegistry, port: number): Promise<http.Server> {
   type MW = ReturnType<ReturnType<typeof createGatewayMiddleware>["require"]>;
   const paywall = new Map<string, MW>();
-  for (const m of registry.members) {
-    const gw = createGatewayMiddleware({
-      sellerAddress: m.signer.address,
-      networks: ARC_TESTNET_NETWORK,
-      facilitatorUrl: FACILITATOR_TESTNET,
-    });
-    paywall.set(m.id, gw.require(`$${m.priceUsdc}`));
-  }
+  // Lazily build a paywall per member (by their payout wallet) so agents that
+  // register at runtime become payable sellers without a restart.
+  const paywallFor = (id: string, wallet: string, price: number): MW => {
+    let mw = paywall.get(id);
+    if (!mw) {
+      mw = createGatewayMiddleware({
+        sellerAddress: wallet,
+        networks: ARC_TESTNET_NETWORK,
+        facilitatorUrl: FACILITATOR_TESTNET,
+      }).require(`$${price}`);
+      paywall.set(id, mw);
+    }
+    return mw;
+  };
 
   const server = http.createServer((req, res) => {
     const match = (req.url ?? "").match(/^\/crew\/([^/?]+)/);
@@ -62,7 +68,7 @@ export function startCrewServer(registry: CrewRegistry, port: number): Promise<h
       };
 
       // Run the Gateway paywall. `next()` means paid+settled → do the work.
-      const mw = paywall.get(member.id)!;
+      const mw = paywallFor(member.id, member.walletAddress, member.priceUsdc);
       const proceed = await new Promise<boolean>((resolve) => {
         let settled = false;
         const done = (v: boolean) => {

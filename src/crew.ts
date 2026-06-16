@@ -1,11 +1,13 @@
 import Groq from "groq-sdk";
 import { config } from "./config";
-import { createLocalSigner, type AgentSigner } from "./signer";
+import { createLocalSigner } from "./signer";
 
 /**
  * A crew member is a specialist agent that sells ONE skill, per task, for a fixed
- * USDC price. Under the hood it's just a Groq system prompt + a wallet — which is
- * exactly why the marketplace is cheap to seed: one template → twenty specialists.
+ * USDC price. `walletAddress` is where its earnings settle. Members can be:
+ *   - seeded (our starter crew),
+ *   - registered + hosted (a system prompt we run on Groq, paid to their wallet),
+ *   - registered + external (their own x402 endpoint — we pay it directly).
  */
 export interface CrewMember {
   id: string;
@@ -13,25 +15,27 @@ export interface CrewMember {
   skill: string;
   description: string;
   priceUsdc: number;
-  signer: AgentSigner;
+  walletAddress: `0x${string}`;
   reputation: number; // 0..100
   jobsCompleted: number;
+  earnedUsdc: number;
   systemPrompt: string;
+  endpointUrl?: string; // bring-your-own x402 seller
+  registered?: boolean;
 }
 
-type Seed = Omit<CrewMember, "signer" | "id" | "jobsCompleted"> & { jobsCompleted?: number };
+type Seed = Pick<CrewMember, "name" | "skill" | "description" | "priceUsdc" | "reputation" | "systemPrompt">;
 
-/** The starter crew we deploy ourselves so the marketplace is alive on day one. */
 const SEED_CREW: Seed[] = [
   { name: "Scout", skill: "research", priceUsdc: 0.05, reputation: 72,
     description: "Gathers facts, sources, and background on any topic.",
-    systemPrompt: "You are Scout, a fast research specialist. Given a task, return concise, concrete findings and 2-4 key facts. No fluff." },
-  { name: "Quill", skill: "copywriting", priceUsdc: 0.30, reputation: 81,
+    systemPrompt: "You are Scout, a fast research specialist. Return concise, concrete findings and 2-4 key facts. No fluff." },
+  { name: "Quill", skill: "copywriting", priceUsdc: 0.3, reputation: 81,
     description: "Writes punchy marketing and editorial copy.",
     systemPrompt: "You are Quill, an expert copywriter. Produce vivid, concise, on-brand copy for the task. No preamble." },
-  { name: "Muse", skill: "image-prompt", priceUsdc: 0.10, reputation: 64,
-    description: "Designs detailed prompts for image-generation models.",
-    systemPrompt: "You are Muse. Output one rich, specific image-generation prompt (style, subject, lighting, mood, aspect)." },
+  { name: "Muse", skill: "image-prompt", priceUsdc: 0.1, reputation: 64,
+    description: "Generates a header/hero image for the brief.",
+    systemPrompt: "You are Muse. Output one rich, specific image description (style, subject, lighting, mood) in 1-2 sentences." },
   { name: "Polish", skill: "proofreading", priceUsdc: 0.03, reputation: 78,
     description: "Fixes grammar, flow, and clarity without changing meaning.",
     systemPrompt: "You are Polish, a meticulous proofreader. Return the corrected text only — fix grammar, flow, clarity; keep meaning." },
@@ -41,7 +45,7 @@ const SEED_CREW: Seed[] = [
   { name: "Verify", skill: "fact-check", priceUsdc: 0.05, reputation: 69,
     description: "Flags dubious claims and checks plausibility.",
     systemPrompt: "You are Verify, a fact-checker. List each claim with a plausibility verdict and a one-line reason." },
-  { name: "Lint", skill: "code-review", priceUsdc: 0.20, reputation: 85,
+  { name: "Lint", skill: "code-review", priceUsdc: 0.2, reputation: 85,
     description: "Reviews code for bugs and clarity.",
     systemPrompt: "You are Lint, a senior code reviewer. Identify concrete issues and suggest fixes succinctly." },
   { name: "Rank", skill: "seo", priceUsdc: 0.07, reputation: 63,
@@ -51,14 +55,19 @@ const SEED_CREW: Seed[] = [
 
 let groqClient: Groq | null | undefined;
 function getGroq(): Groq | null {
-  if (groqClient === undefined) {
-    groqClient = config.groqApiKey ? new Groq({ apiKey: config.groqApiKey }) : null;
-  }
+  if (groqClient === undefined) groqClient = config.groqApiKey ? new Groq({ apiKey: config.groqApiKey }) : null;
   return groqClient;
 }
-
-/** Whether the real brain is available, or we're in deterministic mock mode. */
 export const usingRealBrain = () => getGroq() !== null;
+
+export interface RegisterInput {
+  name: string;
+  skill: string;
+  priceUsdc: number;
+  walletAddress: string;
+  systemPrompt?: string;
+  endpointUrl?: string;
+}
 
 export class CrewRegistry {
   readonly members: CrewMember[];
@@ -67,46 +76,58 @@ export class CrewRegistry {
     this.members = members;
   }
 
-  /** Seed the marketplace with our starter specialists, each given a fresh wallet. */
   static seeded(): CrewRegistry {
     const members = SEED_CREW.map((s, i) => ({
       ...s,
       id: `crew-${i + 1}`,
-      jobsCompleted: s.jobsCompleted ?? 0,
-      signer: createLocalSigner(),
+      walletAddress: createLocalSigner().address,
+      jobsCompleted: 0,
+      earnedUsdc: 0,
     }));
     return new CrewRegistry(members);
+  }
+
+  /** Add an externally-registered agent. Returns the created member. */
+  register(input: RegisterInput): CrewMember {
+    const m: CrewMember = {
+      id: `reg-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e4).toString(36)}`,
+      name: input.name.slice(0, 32),
+      skill: input.skill.trim().toLowerCase(),
+      description: (input.systemPrompt ?? `External ${input.skill} agent`).slice(0, 90),
+      priceUsdc: Math.max(0.001, input.priceUsdc),
+      walletAddress: input.walletAddress as `0x${string}`,
+      reputation: 60,
+      jobsCompleted: 0,
+      earnedUsdc: 0,
+      systemPrompt: input.systemPrompt ?? `You are a helpful ${input.skill} specialist. Be concise and concrete.`,
+      endpointUrl: input.endpointUrl?.trim() || undefined,
+      registered: true,
+    };
+    this.members.push(m);
+    return m;
   }
 
   skills(): string[] {
     return [...new Set(this.members.map((m) => m.skill))];
   }
-
   forSkill(skill: string): CrewMember[] {
     return this.members.filter((m) => m.skill === skill);
   }
+  byId(id: string): CrewMember | undefined {
+    return this.members.find((m) => m.id === id || m.name.toLowerCase() === id.toLowerCase());
+  }
 
-  /** A successful job lifts reputation (capped); the network remembers who delivered. */
-  recordOutcome(id: string, success: boolean): void {
+  recordOutcome(id: string, success: boolean, amountUsdc = 0): void {
     const m = this.members.find((x) => x.id === id);
     if (!m) return;
     m.jobsCompleted += 1;
-    m.reputation = success
-      ? Math.min(100, m.reputation + 2)
-      : Math.max(0, m.reputation - 10);
+    m.reputation = success ? Math.min(100, m.reputation + 2) : Math.max(0, m.reputation - 10);
+    if (success) m.earnedUsdc = Number((m.earnedUsdc + amountUsdc).toFixed(6));
   }
 }
 
-/**
- * Run a crew member's skill on a task — real Groq if configured, else a mock deliverable.
- * `context` carries the work delivered by earlier crew so downstream specialists
- * actually build on it (e.g. the proofreader edits the copy, not the brief).
- */
-export async function runCrewTask(
-  member: CrewMember,
-  task: string,
-  context?: string,
-): Promise<string> {
+/** Run a crew member's skill — real Groq if configured, else a graceful offline deliverable. */
+export async function runCrewTask(member: CrewMember, task: string, context?: string): Promise<string> {
   const fallback = `[${member.name}·${member.skill}] ${task}${context ? " (built on prior crew's work)" : ""} → delivered (offline).`;
   const groq = getGroq();
   if (!groq) return withImage(member.skill, fallback, task);
@@ -126,17 +147,13 @@ export async function runCrewTask(
     });
     return withImage(member.skill, completion.choices[0]?.message?.content?.trim() || fallback, task);
   } catch (err) {
-    // Brain unavailable (rate limit / network) — never crash the economy mid-job.
     const reason = err instanceof Error ? err.message.split("\n")[0] : "unknown";
     console.warn(`  [crew] ${member.name} brain unavailable, delivering offline (${reason})`);
     return withImage(member.skill, fallback, task);
   }
 }
 
-/**
- * The image crew actually GENERATES an image (via Pollinations — free, keyless),
- * not just a text prompt. The deliverable embeds a real, renderable image URL.
- */
+/** The image crew GENERATES a real image (Pollinations — free, keyless). */
 function withImage(skill: string, text: string, task: string): string {
   if (skill !== "image-prompt" && skill !== "image") return text;
   const prompt = (text && text.length > 10 ? text : task).replace(/\s+/g, " ").trim().slice(0, 320);

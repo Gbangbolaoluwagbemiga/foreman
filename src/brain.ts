@@ -71,15 +71,14 @@ function normalizeShares(subtasks: Subtask[]): Subtask[] {
 }
 
 function mockDecompose(goal: string, skills: string[]): Subtask[] {
-  // Heuristic plan: research → produce → polish, using whatever skills exist.
-  const order = ["research", "copywriting", "image-prompt", "proofreading"];
-  const chosen = order.filter((s) => skills.includes(s));
-  const picked = chosen.length > 0 ? chosen : skills.slice(0, 3);
+  const g = goal.toLowerCase();
+  // Skills explicitly named in the goal win (so registered specialists get hired).
+  const mentioned = skills.filter((s) => g.includes(s.replace(/-/g, " ")) || g.includes(s));
+  // Otherwise a sensible default content pipeline.
+  const order = ["research", "copywriting", "image-prompt", "proofreading", "seo"];
+  const base = order.filter((s) => skills.includes(s));
+  const picked = (mentioned.length ? mentioned : base.length ? base : skills.slice(0, 3)).slice(0, 5);
   return normalizeShares(
-    picked.map((skill) => ({
-      skill,
-      description: `${skill} for: ${goal}`,
-      budgetShare: 1 / picked.length,
-    })),
+    picked.map((skill) => ({ skill, description: `${skill} for: ${goal}`, budgetShare: 1 / picked.length })),
   );
 }
