@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ENGINE, runJob } from "@/lib/engine";
 import { LiveDot } from "../components/ui";
+import { Rendered } from "../components/Rendered";
 
 interface LineItem {
   crew: string;
@@ -131,6 +132,14 @@ export default function RunPage() {
             <span className="text-muted">change <span className="font-mono text-ink">${receipt.changeUsdc.toFixed(2)}</span></span>
             <span className="rounded-md border border-edge bg-panel2 px-2 py-0.5 font-mono text-xs text-accent">{receipt.rail}</span>
           </div>
+          {/* Final stitched deliverable */}
+          <div className="border-b border-edge bg-panel2/40 px-5 py-5">
+            <div className="mb-3 text-xs uppercase tracking-wide text-muted">Final deliverable</div>
+            <Rendered text={receipt.result} />
+          </div>
+
+          {/* How it was made — the crew breakdown */}
+          <div className="px-5 py-3 text-xs uppercase tracking-wide text-muted">How it was made</div>
           <div className="divide-y divide-edge">
             {receipt.lineItems.map((li, i) => (
               <div key={i} className="px-5 py-4">
@@ -140,7 +149,9 @@ export default function RunPage() {
                   <span className="font-mono text-accent">${li.priceUsdc.toFixed(2)}</span>
                   <span className="ml-auto font-mono text-xs text-muted">[{li.paymentRef}] · rep {li.reputationAfter}</span>
                 </div>
-                <p className="mt-2 whitespace-pre-wrap text-sm text-ink/80">{li.deliverable.slice(0, 600)}</p>
+                <div className="mt-2">
+                  <Rendered text={li.deliverable} />
+                </div>
               </div>
             ))}
           </div>

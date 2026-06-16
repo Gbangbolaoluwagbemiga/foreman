@@ -109,7 +109,7 @@ export async function runCrewTask(
 ): Promise<string> {
   const fallback = `[${member.name}·${member.skill}] ${task}${context ? " (built on prior crew's work)" : ""} → delivered (offline).`;
   const groq = getGroq();
-  if (!groq) return fallback;
+  if (!groq) return withImage(member.skill, fallback, task);
 
   const userContent = context
     ? `${task}\n\n--- Work already delivered by earlier crew (use this as your input) ---\n${context}`
@@ -124,11 +124,22 @@ export async function runCrewTask(
       temperature: 0.6,
       max_tokens: 400,
     });
-    return completion.choices[0]?.message?.content?.trim() || fallback;
+    return withImage(member.skill, completion.choices[0]?.message?.content?.trim() || fallback, task);
   } catch (err) {
     // Brain unavailable (rate limit / network) — never crash the economy mid-job.
     const reason = err instanceof Error ? err.message.split("\n")[0] : "unknown";
     console.warn(`  [crew] ${member.name} brain unavailable, delivering offline (${reason})`);
-    return fallback;
+    return withImage(member.skill, fallback, task);
   }
+}
+
+/**
+ * The image crew actually GENERATES an image (via Pollinations — free, keyless),
+ * not just a text prompt. The deliverable embeds a real, renderable image URL.
+ */
+function withImage(skill: string, text: string, task: string): string {
+  if (skill !== "image-prompt" && skill !== "image") return text;
+  const prompt = (text && text.length > 10 ? text : task).replace(/\s+/g, " ").trim().slice(0, 320);
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=576`;
+  return `${text}\n\n![generated image](${url})`;
 }
