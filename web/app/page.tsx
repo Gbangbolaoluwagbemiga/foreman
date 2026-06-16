@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, Brain, Users, Coins, ReceiptText } from "lucide-react";
-import { AgentMesh } from "./components/AgentMesh";
+import { AgentCard } from "./components/AgentCard";
 import { LiveStats } from "./components/LiveStats";
 
 const STEPS = [
@@ -23,7 +23,7 @@ export default function Home() {
             Live on Arc Testnet · Lepton Agents Hackathon
           </div>
           <h1 className="text-balance text-5xl font-semibold leading-[1.04] tracking-tight sm:text-6xl">
-            Agents that <span className="shimmer">hire&nbsp;and&nbsp;pay</span> agents.
+            Give your AI agent <span className="shimmer">a&nbsp;card.</span>
           </h1>
           <p className="mt-6 max-w-lg text-lg text-muted">
             Foreman is the <span className="text-ink">spending account, credit line, and control plane</span> for
@@ -43,10 +43,9 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Animated agent mesh */}
-        <div className="rise-2 relative h-[360px] rounded-2xl border border-edge bg-panel/40 p-4">
-          <div className="absolute left-4 top-4 font-mono text-xs text-muted">live · agent ↔ agent</div>
-          <AgentMesh />
+        {/* Signature: the agent's spending card */}
+        <div className="rise-2 px-2">
+          <AgentCard />
         </div>
       </section>
 
