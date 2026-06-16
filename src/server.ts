@@ -84,6 +84,21 @@ function loadRegistered() {
   }
 }
 
+/** Verify an external agent is a real x402 seller: it must answer 402 when unpaid. */
+async function probeX402(url: string): Promise<boolean> {
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(5000),
+    });
+    return r.status === 402;
+  } catch {
+    return false;
+  }
+}
+
 function saveRegistered() {
   const list: RegisterInput[] = registry.members
     .filter((m) => m.registered)
@@ -201,27 +216,53 @@ const server = http.createServer((req, res) => {
   if (req.method === "POST" && url.pathname === "/register") {
     let body = "";
     req.on("data", (c) => (body += c));
-    req.on("end", () => {
-      try {
-        const { name, skill, priceUsdc, walletAddress, systemPrompt, endpointUrl } = JSON.parse(body || "{}");
-        if (!name || !skill) return json({ error: "name and skill are required" }, 400);
-        if (!/^0x[0-9a-fA-F]{40}$/.test(String(walletAddress ?? ""))) return json({ error: "a valid wallet address is required to receive earnings" }, 400);
-        const m = registry.register({
-          name: String(name),
-          skill: String(skill),
-          priceUsdc: Number(priceUsdc) || 0.05,
-          walletAddress: String(walletAddress),
-          systemPrompt: systemPrompt ? String(systemPrompt) : undefined,
-          endpointUrl: endpointUrl ? String(endpointUrl) : undefined,
-        });
-        saveRegistered();
-        broadcast({ type: "crew", members: crewSnapshot() });
-        broadcast({ type: "log", msg: `🆕 ${m.name} registered as a ${m.skill} agent ($${m.priceUsdc}) — now hireable`, ts: Date.now() });
-        json({ ok: true, agent: { id: m.id, name: m.name, skill: m.skill, priceUsdc: m.priceUsdc, walletAddress: m.walletAddress } }, 201);
-      } catch {
-        json({ error: "bad json" }, 400);
-      }
-    });
+    req.on("end", () =>
+      void (async () => {
+        try {
+          const b = JSON.parse(body || "{}");
+          const name = String(b.name ?? "").trim();
+          const skill = String(b.skill ?? "").trim().toLowerCase();
+          const price = Number(b.priceUsdc);
+          const wallet = String(b.walletAddress ?? "");
+          const systemPrompt = b.systemPrompt ? String(b.systemPrompt).trim() : "";
+          const endpointUrl = b.endpointUrl ? String(b.endpointUrl).trim() : "";
+
+          // ── Validation (keep junk/fake agents out) ──
+          if (name.length < 2 || name.length > 40) return json({ error: "name must be 2–40 characters" }, 400);
+          if (!/^[a-z0-9][a-z0-9 -]{0,23}$/.test(skill)) return json({ error: "skill must be a short word (letters, numbers, dashes)" }, 400);
+          if (!Number.isFinite(price) || price < 0.001 || price > 10) return json({ error: "price must be between 0.001 and 10 USDC" }, 400);
+          if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) return json({ error: "a valid wallet address is required to receive earnings" }, 400);
+
+          // Dedupe: one agent per wallet+skill.
+          if (registry.members.some((m) => m.registered && m.skill === skill && m.walletAddress.toLowerCase() === wallet.toLowerCase()))
+            return json({ error: "this wallet already has an agent registered for that skill" }, 409);
+
+          if (endpointUrl) {
+            if (!/^https?:\/\//.test(endpointUrl)) return json({ error: "endpoint must be a valid http(s) URL" }, 400);
+            // Proof-of-realness: a genuine x402 agent answers 402 when unpaid.
+            if (!(await probeX402(endpointUrl)))
+              return json({ error: "endpoint did not return HTTP 402 — not a verifiable x402 paid agent" }, 400);
+          } else if (systemPrompt.length < 15) {
+            return json({ error: "hosted agents need a system prompt of at least 15 characters" }, 400);
+          }
+
+          const m = registry.register({
+            name,
+            skill,
+            priceUsdc: price,
+            walletAddress: wallet,
+            systemPrompt: systemPrompt || undefined,
+            endpointUrl: endpointUrl || undefined,
+          });
+          saveRegistered();
+          broadcast({ type: "crew", members: crewSnapshot() });
+          broadcast({ type: "log", msg: `🆕 ${m.name} registered as a ${m.skill} agent ($${m.priceUsdc}) — now hireable`, ts: Date.now() });
+          json({ ok: true, agent: { id: m.id, name: m.name, skill: m.skill, priceUsdc: m.priceUsdc, walletAddress: m.walletAddress } }, 201);
+        } catch {
+          json({ error: "bad json" }, 400);
+        }
+      })(),
+    );
     return;
   }
   if (req.method === "POST" && url.pathname === "/run") {
