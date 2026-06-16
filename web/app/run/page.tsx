@@ -1,18 +1,23 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useAccount } from "wagmi";
-import { ARCSCAN, ENGINE, runJob } from "@/lib/engine";
+import { ENGINE, rateAgent, runJob } from "@/lib/engine";
+import { ThumbsUp, ThumbsDown } from "lucide-react";
 import { LiveDot } from "../components/ui";
 import { Rendered } from "../components/Rendered";
 import { ForemanWallet } from "../components/ForemanWallet";
 import { AgentControls } from "../components/AgentControls";
+import { StandingOrders } from "../components/StandingOrders";
+import { VerifyLink } from "../components/VerifyLink";
 
 interface LineItem {
   crew: string;
   skill: string;
   priceUsdc: number;
   paymentRef: string;
+  recipient?: string;
   reputationAfter: number;
   deliverable: string;
 }
@@ -33,8 +38,18 @@ export default function RunPage() {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [busy, setBusy] = useState(false);
   const [showBreakdown, setShowBreakdown] = useState(false);
+  const [votes, setVotes] = useState<Record<string, { vote: "like" | "dislike"; reputation: number; delisted: boolean }>>({});
   const logRef = useRef<HTMLDivElement>(null);
   const { address } = useAccount();
+
+  async function vote(skill: string, v: "like" | "dislike") {
+    try {
+      const r = await rateAgent(skill, v);
+      setVotes((prev) => ({ ...prev, [skill]: { vote: v, reputation: r.reputation, delisted: r.delisted } }));
+    } catch {
+      /* ignore */
+    }
+  }
 
   useEffect(() => {
     const es = new EventSource(`${ENGINE}/events`);
@@ -78,13 +93,24 @@ export default function RunPage() {
 
   return (
     <div className="py-10">
-      <h1 className="text-2xl font-semibold">Run a job</h1>
-      <p className="mt-2 text-muted">Give the Foreman a goal and a budget. Watch it hire and pay a crew, live.</p>
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Run a job</h1>
+          <p className="mt-2 text-muted">Give the Foreman a goal and a budget. Watch it hire and pay a crew, live.</p>
+        </div>
+        <Link
+          href="/history"
+          className="flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-muted transition-colors hover:border-accent/50 hover:text-ink"
+        >
+          🕘 Past jobs →
+        </Link>
+      </div>
 
-      {/* Compact balance + fund bar + operator controls */}
+      {/* Compact balance + fund bar + operator controls + autonomous orders */}
       <div className="mt-6 space-y-3">
         <ForemanWallet />
         <AgentControls />
+        <StandingOrders />
       </div>
 
       <div className="mt-5 grid gap-5 lg:grid-cols-2">
@@ -170,15 +196,23 @@ export default function RunPage() {
                   <div className="max-h-72 overflow-y-auto px-4 py-3">
                     <Rendered text={li.deliverable} />
                   </div>
-                  <div className="border-t border-edge px-4 py-2 font-mono text-[11px] text-muted">
-                    {li.paymentRef.startsWith("0x") ? (
-                      <a href={`${ARCSCAN}/tx/${li.paymentRef}`} target="_blank" rel="noreferrer" className="text-accent hover:underline">
-                        {li.paymentRef.slice(0, 12)}… ↗
-                      </a>
+                  <div className="flex items-center gap-2 border-t border-edge px-4 py-2 font-mono text-[11px] text-muted">
+                    <VerifyLink paymentRef={li.paymentRef} recipient={li.recipient} />
+                    {votes[li.skill] ? (
+                      <span className={`ml-auto ${votes[li.skill]!.delisted ? "text-warn" : "text-accent"}`}>
+                        {votes[li.skill]!.delisted ? `delisted · rep ${votes[li.skill]!.reputation}` : `rated · rep ${votes[li.skill]!.reputation}`}
+                      </span>
                     ) : (
-                      `[${li.paymentRef}]`
-                    )}{" "}
-                    · rep {li.reputationAfter}
+                      <span className="ml-auto flex items-center gap-1.5">
+                        <span className="opacity-70">rate:</span>
+                        <button onClick={() => vote(li.skill, "like")} title="Good work" className="rounded border border-edge p-1 hover:border-accent/60 hover:text-accent">
+                          <ThumbsUp size={12} />
+                        </button>
+                        <button onClick={() => vote(li.skill, "dislike")} title="Poor work" className="rounded border border-edge p-1 hover:border-warn/60 hover:text-warn">
+                          <ThumbsDown size={12} />
+                        </button>
+                      </span>
+                    )}
                   </div>
                 </div>
               ))}

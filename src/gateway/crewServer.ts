@@ -91,5 +91,15 @@ export function startCrewServer(registry: CrewRegistry, port: number): Promise<h
     });
   });
 
-  return new Promise((resolve) => server.listen(port, () => resolve(server)));
+  return new Promise((resolve, reject) => {
+    server.once("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE") {
+        console.error(`\n  ⚠  Port ${port} is already in use — the Foreman engine is probably already running.`);
+        console.error(`     Stop the old one first:  lsof -ti:8799 -ti:${port} | xargs kill\n`);
+        process.exit(1);
+      }
+      reject(err);
+    });
+    server.listen(port, () => resolve(server));
+  });
 }

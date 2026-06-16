@@ -16,13 +16,28 @@ export function gatewayHire(gateway: GatewayClient, crewBaseUrl: string): Hirer 
         method: "POST",
         body: { task, context },
       });
-      // result.transaction is the real on-chain settlement tx hash (Gateway batch) —
-      // surface it so every payment is verifiable on Arcscan.
-      const ref = result.transaction?.startsWith("0x") ? result.transaction : `gw:${result.formattedAmount}`;
+      // Gateway settles in gas-free batches, so pay() rarely returns an L1 hash
+      // synchronously. The durable, verifiable artifact is the Circle transfer
+      // RECORD: look it up by recipient + amount right after paying and surface
+      // its UUID as the payment reference (queryable via /transfer → getTransferById).
+      let ref = result.transaction?.startsWith("0x") ? result.transaction : `gw:${result.formattedAmount}`;
+      try {
+        const found = await gateway.searchTransfers({
+          from: gateway.address as `0x${string}`,
+          to: member.walletAddress as `0x${string}`,
+          pageSize: 1,
+        });
+        const t = found.transfers?.[0];
+        // match the just-settled payment by amount (atomic units, 6dp)
+        if (t && Number(t.amount) === Math.round(Number(result.formattedAmount) * 1e6)) ref = t.id;
+      } catch {
+        /* search is best-effort — keep the gw: fallback */
+      }
       return {
         deliverable: result.data?.deliverable ?? "(delivered by external agent)",
         paymentRef: ref,
         amountUsdc: Number(result.formattedAmount),
+        recipient: member.walletAddress,
       };
     } catch (e) {
       // A flaky external/registered endpoint must never crash the job — no pay, no charge.

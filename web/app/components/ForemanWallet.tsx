@@ -64,8 +64,11 @@ export function ForemanWallet() {
   const agentAddr = info?.address;
   const connected = mounted && isConnected;
   const owed = account?.owed ?? 0;
-  // Derive the credit rate from the engine so the label never drifts from the logic.
-  const creditRate = account && account.spent > 0 ? Math.round((account.creditLimit / account.spent) * 100) : 30;
+  // Credit rate + score come straight from the engine so labels never drift from the logic.
+  const creditRate = account?.creditRate ? Math.round(account.creditRate * 100) : 10;
+  const score = account?.creditScore ?? 0;
+  const band = account?.creditBand ?? "no history";
+  const scoreColor = score >= 80 ? "text-accent" : score >= 65 ? "text-accent/80" : score >= 45 ? "text-ink" : "text-muted";
 
   const fund = async () => {
     setNote("");
@@ -116,6 +119,24 @@ export function ForemanWallet() {
             <div className="text-[11px] uppercase tracking-wide text-muted">Your balance</div>
             <div className="font-mono text-ink">
               {connected ? (account ? account.balance.toFixed(2) : "…") : "—"} <span className="text-xs text-muted">USDC</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="hidden h-8 w-px bg-edge sm:block" />
+
+        {/* Credit score — the headline metric, and it moves */}
+        <div className="flex items-center gap-2.5" title="Credit score: repayment history + activity + tenure. Sets your credit line (10–50% of lifetime spend).">
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-muted">Credit score</div>
+            <div className="font-mono">
+              {connected && account ? (
+                <span className={scoreColor}>
+                  {score} <span className="text-xs text-muted">/ 100 · {band}</span>
+                </span>
+              ) : (
+                <span className="text-muted">—</span>
+              )}
             </div>
           </div>
         </div>

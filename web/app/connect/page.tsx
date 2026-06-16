@@ -5,6 +5,7 @@ import { useAccount } from "wagmi";
 import { useAppKit } from "@reown/appkit/react";
 import { Terminal, Wallet, Plug } from "lucide-react";
 import { AgentCard } from "../components/AgentCard";
+import { ENGINE } from "@/lib/engine";
 
 function CopyBlock({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
@@ -31,27 +32,34 @@ export default function ConnectPage() {
   const [tab, setTab] = useState<"claude" | "cursor" | "inspector">("claude");
 
   const user = address ?? "0xYourFundedWallet";
+  // The engine URL tracks the deployment (NEXT_PUBLIC_ENGINE_URL) — localhost in
+  // dev, your hosted engine in production. When hosted, the MCP server runs from
+  // the published npm package, so there's no local path to fill in.
+  const engineUrl = ENGINE;
+  const hosted = !/localhost|127\.0\.0\.1/.test(engineUrl);
   const path = "/ABSOLUTE/PATH/TO/Foreman/src/mcp.ts";
+  const runner = hosted ? "npx -y @foreman/mcp" : `npx tsx "${path}"`;
+  const cursorArgs = hosted ? `["-y", "@foreman/mcp"]` : `["tsx", "${path}"]`;
 
   const snippets = {
     claude: `claude mcp add foreman \\
-  --env FOREMAN_URL=http://localhost:8799 \\
+  --env FOREMAN_URL=${engineUrl} \\
   --env FOREMAN_USER=${user} \\
-  -- npx tsx "${path}"`,
+  -- ${runner}`,
     cursor: `{
   "mcpServers": {
     "foreman": {
       "command": "npx",
-      "args": ["tsx", "${path}"],
+      "args": ${cursorArgs},
       "env": {
-        "FOREMAN_URL": "http://localhost:8799",
+        "FOREMAN_URL": "${engineUrl}",
         "FOREMAN_USER": "${user}"
       }
     }
   }
 }`,
-    inspector: `FOREMAN_URL=http://localhost:8799 FOREMAN_USER=${user} \\
-  npx @modelcontextprotocol/inspector npx tsx "${path}"`,
+    inspector: `FOREMAN_URL=${engineUrl} FOREMAN_USER=${user} \\
+  npx @modelcontextprotocol/inspector ${runner}`,
   };
 
   return (
@@ -84,10 +92,12 @@ export default function ConnectPage() {
             )}
           </div>
           <ol className="space-y-2 text-sm text-muted">
-            <li><span className="text-accent">1.</span> Run the engine: <code className="font-mono text-ink">npm run serve:gateway</code></li>
-            <li><span className="text-accent">2.</span> Add the MCP config (right) to your agent client.</li>
-            <li><span className="text-accent">3.</span> Fund your account on <span className="text-ink">Run a job</span>.</li>
-            <li><span className="text-accent">4.</span> Tell your agent: <span className="text-ink">“use foreman to write a hello world in rust.”</span></li>
+            {!hosted && (
+              <li><span className="text-accent">1.</span> Run the engine: <code className="font-mono text-ink">npm run serve:gateway</code></li>
+            )}
+            <li><span className="text-accent">{hosted ? "1." : "2."}</span> Add the MCP config (right) to your agent client.</li>
+            <li><span className="text-accent">{hosted ? "2." : "3."}</span> Fund your account on <span className="text-ink">Run a job</span>.</li>
+            <li><span className="text-accent">{hosted ? "3." : "4."}</span> Tell your agent: <span className="text-ink">“use foreman to write a hello world in rust.”</span></li>
           </ol>
         </div>
 
@@ -102,7 +112,12 @@ export default function ConnectPage() {
           </div>
           <CopyBlock code={snippets[tab]} />
           <p className="mt-3 flex items-center gap-1.5 text-xs text-muted">
-            <Terminal size={12} /> Replace the path with your absolute path to <code className="font-mono">Foreman/src/mcp.ts</code>.
+            <Terminal size={12} />
+            {hosted ? (
+              <>Runs the published MCP server — nothing to install or clone. Just paste and go.</>
+            ) : (
+              <>Local dev: replace the path with your absolute path to <code className="font-mono">Foreman/src/mcp.ts</code>.</>
+            )}
           </p>
           <div className="mt-5 rounded-lg border border-edge bg-panel2 p-4 text-xs text-muted">
             <div className="flex items-center gap-1.5 text-ink"><Plug size={13} className="text-accent" /> Tools your agent gets</div>

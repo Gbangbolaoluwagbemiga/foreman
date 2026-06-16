@@ -13,6 +13,7 @@ export interface LineItem {
   skill: string;
   priceUsdc: number;
   paymentRef: string;
+  recipient?: string; // payee wallet — verifiable on Arcscan
   reputationAfter: number;
   deliverable: string;
 }
@@ -33,6 +34,7 @@ export interface HireResult {
   deliverable: string;
   paymentRef: string;
   amountUsdc: number;
+  recipient?: string; // payee wallet that received the USDC
 }
 
 /**
@@ -68,7 +70,7 @@ function mockHire(deps: { settlement: Settlement; foreman: AgentSigner }): Hirer
       amountUsdc: member.priceUsdc,
       memo: task.slice(0, 40),
     });
-    return { deliverable, paymentRef: payment.ref, amountUsdc: member.priceUsdc };
+    return { deliverable, paymentRef: payment.ref, amountUsdc: member.priceUsdc, recipient: member.walletAddress };
   };
 }
 
@@ -122,7 +124,7 @@ export async function runJob(job: JobRequest, deps: ForemanDeps): Promise<Receip
 
     say(`🤝 Hiring ${chosen.name} for ${subtask.skill} — $${chosen.priceUsdc.toFixed(2)} (rep ${chosen.reputation})`);
     const context = priorWork.length ? priorWork.join("\n\n") : undefined;
-    const { deliverable, paymentRef, amountUsdc } = await hire(chosen, subtask.description, context);
+    const { deliverable, paymentRef, amountUsdc, recipient } = await hire(chosen, subtask.description, context);
     priorWork.push(`[${subtask.skill} by ${chosen.name}]\n${deliverable}`);
 
     spent += amountUsdc;
@@ -146,6 +148,7 @@ export async function runJob(job: JobRequest, deps: ForemanDeps): Promise<Receip
       skill: subtask.skill,
       priceUsdc: amountUsdc,
       paymentRef,
+      recipient: recipient ?? chosen.walletAddress,
       reputationAfter: updated.reputation,
       deliverable,
     });

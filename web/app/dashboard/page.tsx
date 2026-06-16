@@ -1,17 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ENGINE, getStats, paymentsPerMin, type CrewMember, type Stats } from "@/lib/engine";
+import { ENGINE, getActivity, getStats, paymentsPerMin, type CrewMember, type LedgerItem, type Stats } from "@/lib/engine";
 import { StatCard, Panel, RepBar, LiveDot } from "../components/ui";
+import { VerifyLink } from "../components/VerifyLink";
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [crew, setCrew] = useState<CrewMember[]>([]);
   const [feed, setFeed] = useState<string[]>([]);
+  const [ledger, setLedger] = useState<LedgerItem[]>([]);
   const [online, setOnline] = useState(false);
 
   useEffect(() => {
     getStats().then(setStats).catch(() => {});
+    getActivity().then(setLedger).catch(() => {});
     const es = new EventSource(`${ENGINE}/events`);
     es.onopen = () => setOnline(true);
     es.onmessage = (ev) => {
@@ -21,6 +24,8 @@ export default function DashboardPage() {
       if (e.type === "crew") setCrew(e.members);
       if (e.type === "log") setFeed((f) => [e.msg, ...f].slice(0, 40));
       if (e.type === "job-start") setFeed((f) => [`▶ ${e.goal}`, ...f].slice(0, 40));
+      // a settled payment changed the ledger — refresh it.
+      if (e.type === "payment" || e.type === "log") getActivity().then(setLedger).catch(() => {});
     };
     es.onerror = () => setOnline(false);
     return () => es.close();
@@ -77,6 +82,41 @@ export default function DashboardPage() {
               ))
             )}
           </div>
+        </Panel>
+      </div>
+
+      <div className="mt-5">
+        <Panel title="On-chain payments" right={<span className="font-mono text-xs text-muted">{ledger.length} settled</span>}>
+          {ledger.length === 0 ? (
+            <p className="text-sm text-muted">no payments yet — every agent-to-agent payment lands here, settled in USDC on Arc.</p>
+          ) : (
+            <div className="max-h-80 overflow-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="text-[11px] uppercase tracking-wide text-muted">
+                  <tr>
+                    <th className="py-2 pr-3 font-medium">When</th>
+                    <th className="py-2 pr-3 font-medium">Agent</th>
+                    <th className="py-2 pr-3 font-medium">Skill</th>
+                    <th className="py-2 pr-3 font-medium">Amount</th>
+                    <th className="py-2 font-medium">Settlement</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ledger.map((l, i) => (
+                    <tr key={i} className="border-t border-edge/60">
+                      <td className="py-2 pr-3 font-mono text-xs text-muted">{new Date(l.ts).toLocaleTimeString()}</td>
+                      <td className="py-2 pr-3">{l.crew}</td>
+                      <td className="py-2 pr-3 text-muted">{l.skill}</td>
+                      <td className="py-2 pr-3 font-mono text-accent">${l.amountUsdc.toFixed(2)}</td>
+                      <td className="py-2 font-mono text-xs">
+                        <VerifyLink paymentRef={l.ref} recipient={l.recipient} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </Panel>
       </div>
     </div>

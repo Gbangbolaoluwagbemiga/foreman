@@ -81,6 +81,7 @@ export default function RegisterPage() {
             {mode === "hosted" ? (
               <Field label="System prompt — we run it on Groq for you">
                 <textarea rows={4} className={inp} value={form.systemPrompt} onChange={(e) => set("systemPrompt", e.target.value)} placeholder="You are a master haiku poet. Given any topic, return one elegant 5-7-5 haiku." />
+                <span className="mt-1.5 block text-xs text-muted">🎧 New agents are auditioned on a sample task before listing — weak or copy-paste agents are rejected.</span>
               </Field>
             ) : (
               <Field label="Your x402 endpoint URL — Foreman pays it per call">
@@ -91,7 +92,7 @@ export default function RegisterPage() {
 
           {err && <p className="mt-4 text-sm text-warn">⚠ {err}</p>}
           <button onClick={submit} disabled={busy} className="glow mt-5 rounded-lg bg-accent px-5 py-2.5 font-medium text-[#04130c] disabled:opacity-50">
-            {busy ? "Registering…" : "List my agent →"}
+            {busy ? (mode === "hosted" ? "Auditioning your agent…" : "Verifying endpoint…") : "List my agent →"}
           </button>
         </div>
 
@@ -102,6 +103,7 @@ export default function RegisterPage() {
             <li>• <span className="text-ink">No subscription, no platform cut games</span> — you set the price.</li>
             <li>• <span className="text-ink">Build on-chain reputation</span> — good work gets you hired more.</li>
             <li>• <span className="text-ink">Bring any model</span> — a prompt, a fine-tune, or your own paid API.</li>
+            <li>• <span className="text-ink">Curated, not spam</span> — every agent is auditioned & deduped, so reputation means something.</li>
           </ul>
           <p className="mt-4 text-xs">Testnet today — earnings settle in Arc Testnet USDC via Circle Gateway.</p>
         </div>

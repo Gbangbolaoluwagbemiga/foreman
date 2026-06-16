@@ -7,3 +7,6 @@ dist/
 
 # runtime registrations (contains wallet addresses)
 data/
+
+# local MCP config (machine path + wallet)
+.mcp.json

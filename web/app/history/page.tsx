@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useAccount } from "wagmi";
 import { useAppKit } from "@reown/appkit/react";
 import { getHistory, type HistoryJob } from "@/lib/engine";
 import { Rendered } from "../components/Rendered";
+import { VerifyLink } from "../components/VerifyLink";
 
 export default function HistoryPage() {
   const { address, isConnected } = useAccount();
@@ -30,7 +32,8 @@ export default function HistoryPage() {
 
   return (
     <div className="py-10">
-      <h1 className="text-2xl font-semibold">Your history</h1>
+      <Link href="/run" className="text-sm text-muted transition-colors hover:text-ink">← Back to Run a job</Link>
+      <h1 className="mt-3 text-2xl font-semibold">Your history</h1>
       <p className="mt-2 text-muted">Every job your Foreman has run — what it cost, who it hired, and what came back.</p>
 
       {jobs.length === 0 ? (
@@ -52,8 +55,9 @@ export default function HistoryPage() {
                 <div className="border-t border-edge px-5 py-4">
                   <div className="mb-3 flex flex-wrap gap-2 font-mono text-xs text-muted">
                     {j.lineItems.map((li, k) => (
-                      <span key={k} className="rounded-md border border-edge bg-panel2 px-2 py-0.5">
+                      <span key={k} className="flex items-center gap-1.5 rounded-md border border-edge bg-panel2 px-2 py-0.5">
                         {li.crew} · {li.skill} · ${li.priceUsdc.toFixed(2)}
+                        <VerifyLink paymentRef={li.paymentRef} recipient={li.recipient} />
                       </span>
                     ))}
                   </div>
