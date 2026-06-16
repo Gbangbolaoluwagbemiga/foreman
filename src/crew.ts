@@ -27,34 +27,37 @@ export interface CrewMember {
 
 /** Intrinsic reliability per seeded agent — reputation converges here over time. */
 const RELIABILITY: Record<string, number> = {
-  Lint: 0.96, Quill: 0.94, Polish: 0.92, Scout: 0.9, Digest: 0.86, Verify: 0.88, Rank: 0.85, Muse: 0.82,
+  Lint: 0.96, Codex: 0.95, Quill: 0.94, Polish: 0.92, Scout: 0.9, Digest: 0.86, Verify: 0.88, Rank: 0.85, Muse: 0.82,
 };
 
 type Seed = Pick<CrewMember, "name" | "skill" | "description" | "priceUsdc" | "reputation" | "systemPrompt">;
 
 const SEED_CREW: Seed[] = [
-  { name: "Scout", skill: "research", priceUsdc: 0.05, reputation: 72,
+  { name: "Scout", skill: "research", priceUsdc: 0.02, reputation: 72,
     description: "Gathers facts, sources, and background on any topic.",
     systemPrompt: "You are Scout, a fast research specialist. Return concise, concrete findings and 2-4 key facts. No fluff." },
-  { name: "Quill", skill: "copywriting", priceUsdc: 0.3, reputation: 81,
+  { name: "Quill", skill: "copywriting", priceUsdc: 0.1, reputation: 81,
     description: "Writes punchy marketing and editorial copy.",
     systemPrompt: "You are Quill, an expert copywriter. Produce vivid, concise, on-brand copy for the task. No preamble." },
-  { name: "Muse", skill: "image-prompt", priceUsdc: 0.1, reputation: 64,
+  { name: "Codex", skill: "coding", priceUsdc: 0.08, reputation: 80,
+    description: "Writes clean, correct code in any language.",
+    systemPrompt: "You are Codex, an expert programmer. Write exactly what is asked — minimal and correct. Output only the code in a fenced block, plus one short line if essential. No tutorials, no padding." },
+  { name: "Muse", skill: "image-prompt", priceUsdc: 0.04, reputation: 64,
     description: "Generates a header/hero image for the brief.",
     systemPrompt: "You are Muse, an art director. Reply with ONLY a vivid visual description of the image to generate — concrete subject, setting, style, lighting, mood. One sentence, no preamble, no quotes, and do NOT restate or mention the task/brief." },
-  { name: "Polish", skill: "proofreading", priceUsdc: 0.03, reputation: 78,
+  { name: "Polish", skill: "proofreading", priceUsdc: 0.01, reputation: 78,
     description: "Fixes grammar, flow, and clarity without changing meaning.",
     systemPrompt: "You are Polish, a meticulous proofreader. Return the corrected text only — fix grammar, flow, clarity; keep meaning." },
-  { name: "Digest", skill: "summarization", priceUsdc: 0.04, reputation: 66,
+  { name: "Digest", skill: "summarization", priceUsdc: 0.02, reputation: 66,
     description: "Condenses long content into tight summaries.",
     systemPrompt: "You are Digest. Summarize the input into the tightest faithful summary possible." },
-  { name: "Verify", skill: "fact-check", priceUsdc: 0.05, reputation: 69,
+  { name: "Verify", skill: "fact-check", priceUsdc: 0.02, reputation: 69,
     description: "Flags dubious claims and checks plausibility.",
     systemPrompt: "You are Verify, a fact-checker. List each claim with a plausibility verdict and a one-line reason." },
-  { name: "Lint", skill: "code-review", priceUsdc: 0.2, reputation: 85,
+  { name: "Lint", skill: "code-review", priceUsdc: 0.05, reputation: 85,
     description: "Reviews code for bugs and clarity.",
     systemPrompt: "You are Lint, a senior code reviewer. Identify concrete issues and suggest fixes succinctly." },
-  { name: "Rank", skill: "seo", priceUsdc: 0.07, reputation: 63,
+  { name: "Rank", skill: "seo", priceUsdc: 0.03, reputation: 63,
     description: "Optimizes copy for search with keywords and meta.",
     systemPrompt: "You are Rank, an SEO specialist. Suggest a title tag, meta description, and 5 target keywords for the task." },
 ];

@@ -5,7 +5,7 @@ import { config } from "./config";
 import { CrewRegistry, usingRealBrain, type RegisterInput } from "./crew";
 import { createLocalSigner } from "./signer";
 import { MockSettlement } from "./settlement";
-import { runJob, type Hirer } from "./orchestrator";
+import { runJob, type Hirer, type Receipt } from "./orchestrator";
 
 const DATA_FILE = path.join(process.cwd(), "data", "registered.json");
 
@@ -37,7 +37,8 @@ interface Account {
   spent: number;
 }
 const accounts = new Map<string, Account>();
-const OVERDRAFT_RATE = 0.1;
+const history = new Map<string, Array<{ ts: number } & Receipt>>();
+const OVERDRAFT_RATE = 0.3;
 function acct(user: string): Account {
   const k = user.toLowerCase();
   let a = accounts.get(k);
@@ -178,6 +179,11 @@ async function handleRun(goal: string, budgetUsdc: number, user?: string) {
       const a = acct(user);
       a.spent = Number((a.spent + receipt.spentUsdc).toFixed(6));
       broadcast({ type: "account", account: accountView(user), ts: Date.now() });
+      const k = user.toLowerCase();
+      const h = history.get(k) ?? [];
+      h.unshift({ ts: Date.now(), ...receipt });
+      if (h.length > 50) h.length = 50;
+      history.set(k, h);
     }
     broadcast({ type: "receipt", receipt, ts: Date.now() });
     broadcast({ type: "stats", stats, ts: Date.now() });
@@ -326,6 +332,12 @@ const server = http.createServer((req, res) => {
         json({ error: "bad json" }, 400);
       }
     });
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/history") {
+    const user = url.searchParams.get("user") ?? "";
+    if (!/^0x[0-9a-fA-F]{40}$/.test(user)) return json({ error: "valid user address required" }, 400);
+    json({ jobs: history.get(user.toLowerCase()) ?? [] });
     return;
   }
   if (req.method === "GET" && url.pathname === "/account") {

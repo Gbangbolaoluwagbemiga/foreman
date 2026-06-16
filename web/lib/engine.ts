@@ -99,6 +99,18 @@ export interface Account {
 }
 export const getAccount = (user: string) => get<Account>(`/account?user=${user}`);
 
+export interface HistoryJob {
+  ts: number;
+  goal: string;
+  budgetUsdc: number;
+  spentUsdc: number;
+  changeUsdc: number;
+  rail: string;
+  lineItems: { crew: string; skill: string; priceUsdc: number; paymentRef: string; deliverable: string }[];
+  result: string;
+}
+export const getHistory = (user: string) => get<{ jobs: HistoryJob[] }>(`/history?user=${user}`).then((d) => d.jobs);
+
 export async function reportDeposit(user: string, amount: number): Promise<Account> {
   const r = await fetch(`${ENGINE}/account/deposit`, {
     method: "POST",

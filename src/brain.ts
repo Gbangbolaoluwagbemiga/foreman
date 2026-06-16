@@ -16,10 +16,14 @@ export async function decompose(
   goal: string,
   availableSkills: string[],
 ): Promise<Subtask[]> {
-  const system = `You are Foreman, an AI general contractor. Break the user's goal into 2-5 subtasks.
-Each subtask MUST use a skill from this list: ${availableSkills.join(", ")}.
+  const system = `You are Foreman, an AI general contractor. Hire the FEWEST specialists that genuinely satisfy the goal — often exactly ONE.
+Rules:
+- Match the request precisely. A simple ask ("a line of code", "translate this", "a tagline") needs ONE subtask.
+- Do NOT add research, SEO, proofreading, fact-check, or images UNLESS the goal clearly calls for them.
+- Never pad the plan to use more agents. Less is better.
+- Each subtask MUST use a skill from this list: ${availableSkills.join(", ")}. Pick the closest-matching skill.
 Return ONLY JSON: {"subtasks":[{"skill":"<one of the list>","description":"<what to do>","budgetShare":<0..1>}]}
-budgetShare values should sum to ~1. Order subtasks logically (e.g. research before writing).`;
+Use 1-4 subtasks (prefer 1-2). budgetShare values sum to ~1.`;
   const text = await groqComplete(
     [
       { role: "system", content: system },
@@ -65,12 +69,20 @@ function normalizeShares(subtasks: Subtask[]): Subtask[] {
 
 function mockDecompose(goal: string, skills: string[]): Subtask[] {
   const g = goal.toLowerCase();
-  // Skills explicitly named in the goal win (so registered specialists get hired).
-  const mentioned = skills.filter((s) => g.includes(s.replace(/-/g, " ")) || g.includes(s));
-  // Otherwise a sensible default content pipeline.
-  const order = ["research", "copywriting", "image-prompt", "proofreading", "seo"];
-  const base = order.filter((s) => skills.includes(s));
-  const picked = (mentioned.length ? mentioned : base.length ? base : skills.slice(0, 3)).slice(0, 5);
+  // Map common keywords → the right skill so the offline planner is still smart.
+  const KEYWORDS: Record<string, string> = {
+    code: "coding", coding: "coding", function: "coding", script: "coding", program: "coding",
+    rust: "coding", python: "coding", javascript: "coding", typescript: "coding", solidity: "coding",
+    translate: "translation", summarize: "summarization", summary: "summarization",
+    image: "image-prompt", logo: "image-prompt", banner: "image-prompt",
+    seo: "seo", proofread: "proofreading", "fact-check": "fact-check", review: "code-review",
+  };
+  const named = skills.filter((s) => g.includes(s.replace(/-/g, " ")) || g.includes(s));
+  const fromKeywords = Object.entries(KEYWORDS).filter(([k]) => g.includes(k)).map(([, v]) => v);
+  const wanted = [...new Set([...named, ...fromKeywords])].filter((s) => skills.includes(s));
+  // Otherwise hire a single sensible default — keep it minimal, don't pad.
+  const fallback = skills.includes("copywriting") ? ["copywriting"] : skills.slice(0, 1);
+  const picked = (wanted.length ? wanted : fallback).slice(0, 4);
   return normalizeShares(
     picked.map((skill) => ({ skill, description: `${skill} for: ${goal}`, budgetShare: 1 / picked.length })),
   );
