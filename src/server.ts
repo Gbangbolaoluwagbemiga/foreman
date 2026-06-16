@@ -2,19 +2,41 @@ import http from "node:http";
 import { config } from "./config";
 import { CrewRegistry, usingRealBrain } from "./crew";
 import { createLocalSigner } from "./signer";
-import { createSettlement } from "./settlement";
-import { runJob } from "./orchestrator";
+import { MockSettlement } from "./settlement";
+import { runJob, type Hirer } from "./orchestrator";
 
+/**
+ * Foreman engine API — drives the orchestrator and exposes the live economy to
+ * the Next.js app. Rail-agnostic: ENGINE_RAIL=mock (default) or =gateway (real
+ * Circle Gateway settlement on Arc).
+ *
+ *   GET  /stats     cumulative jobs / payments / volume
+ *   GET  /crew      crew marketplace + reputation
+ *   GET  /activity  recent agent-to-agent payments (ledger)
+ *   GET  /events    SSE stream of live decisions + payments
+ *   POST /run       { goal, budget } → runs a job (streamed over /events)
+ */
 const PORT = Number(process.env.PORT) || 8799;
+const RAIL = (process.env.ENGINE_RAIL || "mock") as "mock" | "gateway";
 
-// Long-lived state: the marketplace persists across jobs while the node runs,
-// so reputation accrues in real time — the live economy.
 const registry = CrewRegistry.seeded();
-const settlement = createSettlement();
-const foreman = createLocalSigner(config.foremanPrivateKey || undefined);
-
 const clients = new Set<http.ServerResponse>();
 const log: unknown[] = [];
+const stats = { jobs: 0, payments: 0, volumeUsdc: 0, startedAt: Date.now(), rail: RAIL };
+const ledger: Array<{ ts: number; crew: string; skill: string; amountUsdc: number; ref: string }> = [];
+
+let hireFn: Hirer | undefined; // gateway rail
+let beforeRun: (() => Promise<void>) | undefined;
+let mockSettlement: MockSettlement | undefined;
+let mockForeman = createLocalSigner();
+let foremanAddress = mockForeman.address;
+let running = false;
+
+function cors(res: http.ServerResponse) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+}
 
 function broadcast(event: unknown) {
   log.push(event);
@@ -24,53 +46,87 @@ function broadcast(event: unknown) {
 }
 
 function crewSnapshot() {
-  return {
-    type: "crew",
-    members: registry.members
-      .map((m) => ({ name: m.name, skill: m.skill, priceUsdc: m.priceUsdc, reputation: m.reputation, jobs: m.jobsCompleted }))
-      .sort((a, b) => b.reputation - a.reputation),
-  };
+  return registry.members
+    .map((m) => ({
+      name: m.name,
+      skill: m.skill,
+      priceUsdc: m.priceUsdc,
+      reputation: m.reputation,
+      jobs: m.jobsCompleted,
+      address: m.signer.address,
+    }))
+    .sort((a, b) => b.reputation - a.reputation);
 }
 
 async function handleRun(goal: string, budgetUsdc: number) {
+  if (running) {
+    broadcast({ type: "log", msg: "⏳ a job is already running", ts: Date.now() });
+    return;
+  }
+  running = true;
   broadcast({ type: "job-start", goal, budgetUsdc, ts: Date.now() });
   try {
-    const receipt = await runJob({ goal, budgetUsdc }, {
-      registry,
-      settlement,
-      foreman,
-      onEvent: (msg) => broadcast({ type: "log", msg, ts: Date.now() }),
-    });
+    if (beforeRun) await beforeRun();
+    const receipt = await runJob(
+      { goal, budgetUsdc },
+      hireFn
+        ? { registry, hire: hireFn, rail: "circle-gateway", onEvent: (m) => broadcast({ type: "log", msg: m, ts: Date.now() }) }
+        : { registry, settlement: mockSettlement!, foreman: mockForeman, onEvent: (m) => broadcast({ type: "log", msg: m, ts: Date.now() }) },
+    );
+    stats.jobs += 1;
+    stats.payments += receipt.lineItems.length;
+    stats.volumeUsdc += receipt.spentUsdc;
+    for (const li of receipt.lineItems) {
+      ledger.unshift({ ts: Date.now(), crew: li.crew, skill: li.skill, amountUsdc: li.priceUsdc, ref: li.paymentRef });
+    }
+    if (ledger.length > 200) ledger.length = 200;
     broadcast({ type: "receipt", receipt, ts: Date.now() });
-    broadcast(crewSnapshot());
+    broadcast({ type: "stats", stats, ts: Date.now() });
+    broadcast({ type: "crew", members: crewSnapshot(), ts: Date.now() });
   } catch (e) {
     broadcast({ type: "log", msg: `❌ ${(e as Error).message}`, ts: Date.now() });
+  } finally {
+    running = false;
   }
 }
 
 const server = http.createServer((req, res) => {
-  const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
-
-  if (req.method === "GET" && url.pathname === "/") {
-    res.writeHead(200, { "Content-Type": "text/html" });
-    res.end(PAGE);
+  cors(res);
+  if (req.method === "OPTIONS") {
+    res.writeHead(204).end();
     return;
   }
+  const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
+  const json = (data: unknown, code = 200) => {
+    res.writeHead(code, { "Content-Type": "application/json" }).end(JSON.stringify(data));
+  };
 
+  if (req.method === "GET" && url.pathname === "/") {
+    json({ ok: true, service: "foreman-engine", rail: RAIL, brain: usingRealBrain() ? config.groqModel : "mock", foreman: foremanAddress });
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/stats") {
+    json({ ...stats, foreman: foremanAddress, brain: usingRealBrain() ? config.groqModel : "mock" });
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/crew") {
+    json({ members: crewSnapshot() });
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/activity") {
+    json({ ledger });
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/events") {
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    });
-    res.write(`data: ${JSON.stringify({ type: "hello", brain: usingRealBrain() ? config.groqModel : "mock", rail: settlement.rail, foreman: foreman.address })}\n\n`);
-    res.write(`data: ${JSON.stringify(crewSnapshot())}\n\n`);
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+    res.write(`data: ${JSON.stringify({ type: "hello", rail: RAIL, brain: usingRealBrain() ? config.groqModel : "mock", foreman: foremanAddress })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: "stats", stats })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: "crew", members: crewSnapshot() })}\n\n`);
     for (const e of log) res.write(`data: ${JSON.stringify(e)}\n\n`);
     clients.add(res);
     req.on("close", () => clients.delete(res));
     return;
   }
-
   if (req.method === "POST" && url.pathname === "/run") {
     let body = "";
     req.on("data", (c) => (body += c));
@@ -78,58 +134,52 @@ const server = http.createServer((req, res) => {
       try {
         const { goal, budget } = JSON.parse(body || "{}");
         const g = String(goal || "").trim();
-        const b = Number(budget) || 1;
-        if (!g) { res.writeHead(400).end(JSON.stringify({ error: "goal required" })); return; }
-        void handleRun(g, b);
-        res.writeHead(202, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true }));
+        if (!g) return json({ error: "goal required" }, 400);
+        void handleRun(g, Number(budget) || 1);
+        json({ ok: true }, 202);
       } catch {
-        res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "bad json" }));
+        json({ error: "bad json" }, 400);
       }
     });
     return;
   }
-
-  res.writeHead(404).end("not found");
+  json({ error: "not found" }, 404);
 });
 
-server.listen(PORT, () => {
-  console.log(`\n  🟢 Foreman node live → http://localhost:${PORT}`);
-  console.log(`     brain: ${usingRealBrain() ? config.groqModel : "mock"}   rail: ${settlement.rail}   crew: ${registry.members.length}`);
-  console.log(`     POST a job:  curl -s localhost:${PORT}/run -d '{"goal":"...","budget":1}'\n`);
-});
+async function start() {
+  if (RAIL === "gateway") {
+    const { startCrewServer } = await import("./gateway/crewServer");
+    const { createForemanGateway } = await import("./gateway/foreman");
+    const { gatewayHire } = await import("./gateway/hirer");
+    const { generatePrivateKey } = await import("viem/accounts");
 
-const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>Foreman — live</title>
-<style>
- body{background:#0b0d10;color:#d8dee9;font:14px/1.5 ui-monospace,Menlo,monospace;margin:0;padding:24px}
- h1{font-size:18px;margin:0 0 4px} .sub{color:#7a8290;margin-bottom:16px}
- .row{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
- .panel{background:#12151a;border:1px solid #1e232b;border-radius:10px;padding:14px;flex:1;min-width:320px}
- input{background:#0b0d10;color:#d8dee9;border:1px solid #2a313b;border-radius:6px;padding:8px;font:inherit}
- #goal{width:100%;box-sizing:border-box} button{background:#3b6e4f;color:#fff;border:0;border-radius:6px;padding:9px 16px;cursor:pointer;font:inherit}
- #logwrap{height:340px;overflow:auto;background:#0b0d10;border-radius:8px;padding:10px;margin-top:10px}
- .log{white-space:pre-wrap;margin:2px 0} table{width:100%;border-collapse:collapse} td,th{text-align:left;padding:5px 8px;border-bottom:1px solid #1a1f27}
- .rep{color:#7fd1a0} .meta{color:#7a8290} .receipt{color:#e3c46b}
-</style></head><body>
-<h1>🏗️ Foreman — live node</h1>
-<div class="sub" id="meta">connecting…</div>
-<div class="row">
- <div class="panel" style="flex:2">
-  <input id="goal" placeholder="Give Foreman a goal…" value="Write a short blog post about my new coffee shop 'Bean There', with a catchy headline and a header image concept.">
-  <div style="margin-top:8px"><span class="meta">budget $</span><input id="budget" value="1" size="4"> <button onclick="run()">Hire a crew →</button></div>
-  <div id="logwrap"></div>
- </div>
- <div class="panel"><b>Crew marketplace</b><table id="crew"><thead><tr><th>agent</th><th>skill</th><th>$</th><th>rep</th><th>jobs</th></tr></thead><tbody></tbody></table></div>
-</div>
-<script>
- var wrap=document.getElementById('logwrap');
- function add(cls,txt){var d=document.createElement('div');d.className='log '+cls;d.textContent=txt;wrap.appendChild(d);wrap.scrollTop=wrap.scrollHeight;}
- function run(){fetch('/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({goal:document.getElementById('goal').value,budget:document.getElementById('budget').value})});}
- var es=new EventSource('/events');
- es.onmessage=function(ev){var e=JSON.parse(ev.data);
-   if(e.type==='hello'){document.getElementById('meta').textContent='brain: '+e.brain+'   •   rail: '+e.rail+'   •   foreman: '+e.foreman;}
-   else if(e.type==='crew'){var b='';e.members.forEach(function(m){b+='<tr><td>'+m.name+'</td><td>'+m.skill+'</td><td>'+m.priceUsdc.toFixed(2)+'</td><td class=rep>'+m.reputation+'</td><td>'+m.jobs+'</td></tr>';});document.querySelector('#crew tbody').innerHTML=b;}
-   else if(e.type==='job-start'){add('meta','──────── new job: '+e.goal+' ($'+e.budgetUsdc+')');}
-   else if(e.type==='log'){add('',e.msg);}
-   else if(e.type==='receipt'){var r=e.receipt;add('receipt','🧾 spent $'+r.spentUsdc.toFixed(2)+' / $'+r.budgetUsdc.toFixed(2)+' • change $'+r.changeUsdc.toFixed(2)+' • '+r.lineItems.length+' crew paid • rail '+r.rail);}
- };
-</script></body></html>`;
+    const CREW_PORT = PORT + 1;
+    await startCrewServer(registry, CREW_PORT);
+    const gateway = createForemanGateway((config.foremanPrivateKey || generatePrivateKey()) as `0x${string}`);
+    foremanAddress = gateway.address;
+    hireFn = gatewayHire(gateway, `http://localhost:${CREW_PORT}`);
+
+    // Keep enough Gateway balance for a job before each run.
+    beforeRun = async () => {
+      const need = 1_000_000n; // $1.00 headroom
+      let available = (await gateway.getBalances()).gateway.available;
+      if (available >= need) return;
+      broadcast({ type: "log", msg: "💰 topping up Gateway balance…", ts: Date.now() });
+      await gateway.deposit("2");
+      const startedAt = Date.now();
+      while (available < need && Date.now() - startedAt < 90_000) {
+        await new Promise((r) => setTimeout(r, 3000));
+        available = (await gateway.getBalances()).gateway.available;
+      }
+    };
+  } else {
+    mockSettlement = new MockSettlement();
+  }
+
+  server.listen(PORT, () => {
+    console.log(`\n  🟢 Foreman engine API → http://localhost:${PORT}   rail: ${RAIL}`);
+    console.log(`     GET /stats /crew /activity /events   POST /run\n`);
+  });
+}
+
+void start();
