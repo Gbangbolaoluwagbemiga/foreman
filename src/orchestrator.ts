@@ -126,9 +126,16 @@ export async function runJob(job: JobRequest, deps: ForemanDeps): Promise<Receip
     priorWork.push(`[${subtask.skill} by ${chosen.name}]\n${deliverable}`);
 
     spent += amountUsdc;
-    registry.recordOutcome(chosen.id, true, amountUsdc);
+    // Delivery quality varies by the agent's reliability (an SLA model). Payment
+    // happens regardless (x402 pay-first); reputation is the market's recourse.
+    const success = Math.random() < chosen.reliability;
+    registry.recordOutcome(chosen.id, success, amountUsdc);
     const updated = registry.members.find((m) => m.id === chosen.id)!;
-    say(`💸 Paid ${chosen.name} $${amountUsdc.toFixed(2)} USDC [${paymentRef}] — rep → ${updated.reputation}`);
+    say(
+      success
+        ? `💸 Paid ${chosen.name} $${amountUsdc.toFixed(2)} USDC [${paymentRef}] — rep → ${updated.reputation}`
+        : `⚠️ ${chosen.name} delivered below par — paid $${amountUsdc.toFixed(2)} [${paymentRef}] but reputation slashed → ${updated.reputation}`,
+    );
 
     lineItems.push({
       crew: chosen.name,

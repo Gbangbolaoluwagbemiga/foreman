@@ -62,7 +62,13 @@ export function chooseCrew(
     .forSkill(subtask.skill)
     .filter((m) => m.priceUsdc <= budgetForSubtask)
     .sort((a, b) => b.reputation - a.reputation || a.priceUsdc - b.priceUsdc);
-  return candidates[0] ?? null;
+  if (candidates.length === 0) return null;
+  // Mostly hire the best, but explore ~20% of the time so newcomers and registered
+  // agents get discovered — that's how a real market forms (and solves cold-start).
+  if (candidates.length > 1 && Math.random() < 0.2) {
+    return candidates[Math.floor(Math.random() * candidates.length)]!;
+  }
+  return candidates[0]!;
 }
 
 function normalizeShares(subtasks: Subtask[]): Subtask[] {

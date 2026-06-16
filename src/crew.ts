@@ -16,13 +16,19 @@ export interface CrewMember {
   description: string;
   priceUsdc: number;
   walletAddress: `0x${string}`;
-  reputation: number; // 0..100
+  reputation: number; // 0..100, a moving average of delivery quality
+  reliability: number; // 0..1 intrinsic quality/SLA — drives reputation over time
   jobsCompleted: number;
   earnedUsdc: number;
   systemPrompt: string;
   endpointUrl?: string; // bring-your-own x402 seller
   registered?: boolean;
 }
+
+/** Intrinsic reliability per seeded agent — reputation converges here over time. */
+const RELIABILITY: Record<string, number> = {
+  Lint: 0.96, Quill: 0.94, Polish: 0.92, Scout: 0.9, Digest: 0.86, Verify: 0.88, Rank: 0.85, Muse: 0.82,
+};
 
 type Seed = Pick<CrewMember, "name" | "skill" | "description" | "priceUsdc" | "reputation" | "systemPrompt">;
 
@@ -81,6 +87,7 @@ export class CrewRegistry {
       ...s,
       id: `crew-${i + 1}`,
       walletAddress: createLocalSigner().address,
+      reliability: RELIABILITY[s.name] ?? 0.9,
       jobsCompleted: 0,
       earnedUsdc: 0,
     }));
@@ -97,6 +104,7 @@ export class CrewRegistry {
       priceUsdc: Math.max(0.001, input.priceUsdc),
       walletAddress: input.walletAddress as `0x${string}`,
       reputation: 60,
+      reliability: 0.9, // newcomers start optimistic; the market learns the truth
       jobsCompleted: 0,
       earnedUsdc: 0,
       systemPrompt: input.systemPrompt ?? `You are a helpful ${input.skill} specialist. Be concise and concrete.`,
@@ -121,8 +129,11 @@ export class CrewRegistry {
     const m = this.members.find((x) => x.id === id);
     if (!m) return;
     m.jobsCompleted += 1;
-    m.reputation = success ? Math.min(100, m.reputation + 2) : Math.max(0, m.reputation - 10);
-    if (success) m.earnedUsdc = Number((m.earnedUsdc + amountUsdc).toFixed(6));
+    // Reputation = exponential moving average of delivery quality. Converges to the
+    // agent's true reliability and visibly dips when a delivery comes in below par.
+    m.reputation = Math.round(m.reputation * 0.8 + (success ? 100 : 0) * 0.2);
+    // Paid via x402 regardless (pay-first) — at nano scale, reputation is the recourse.
+    m.earnedUsdc = Number((m.earnedUsdc + amountUsdc).toFixed(6));
   }
 }
 
