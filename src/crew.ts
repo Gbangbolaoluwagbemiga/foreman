@@ -66,6 +66,44 @@ function getGroq(): Groq | null {
 }
 export const usingRealBrain = () => getGroq() !== null;
 
+export interface GroqOpts {
+  temperature?: number;
+  maxTokens?: number;
+  json?: boolean;
+}
+
+/**
+ * Run a chat completion, automatically falling back to the secondary model when
+ * the primary is rate-limited (it has a separate daily quota). Returns null if
+ * every model is unavailable, so callers can degrade gracefully.
+ */
+export async function groqComplete(
+  messages: { role: "system" | "user"; content: string }[],
+  opts: GroqOpts = {},
+): Promise<string | null> {
+  const groq = getGroq();
+  if (!groq) return null;
+  const models = [...new Set([config.groqModel, config.groqFallbackModel].filter(Boolean))];
+  for (const model of models) {
+    try {
+      const c = await groq.chat.completions.create({
+        model,
+        messages,
+        temperature: opts.temperature ?? 0.6,
+        max_tokens: opts.maxTokens ?? 400,
+        ...(opts.json ? { response_format: { type: "json_object" as const } } : {}),
+      });
+      const t = c.choices[0]?.message?.content?.trim();
+      if (t) return t;
+    } catch (err) {
+      const msg = (err instanceof Error ? err.message.split("\n")[0] : "unknown") ?? "unknown";
+      console.warn(`  [groq] ${model} unavailable — ${msg.slice(0, 80)}`);
+      // fall through to the next model
+    }
+  }
+  return null;
+}
+
 export interface RegisterInput {
   name: string;
   skill: string;
@@ -140,28 +178,17 @@ export class CrewRegistry {
 /** Run a crew member's skill — real Groq if configured, else a graceful offline deliverable. */
 export async function runCrewTask(member: CrewMember, task: string, context?: string): Promise<string> {
   const fallback = `[${member.name}·${member.skill}] ${task}${context ? " (built on prior crew's work)" : ""} → delivered (offline).`;
-  const groq = getGroq();
-  if (!groq) return withImage(member.skill, fallback, task);
-
   const userContent = context
     ? `${task}\n\n--- Work already delivered by earlier crew (use this as your input) ---\n${context}`
     : task;
-  try {
-    const completion = await groq.chat.completions.create({
-      model: config.groqModel,
-      messages: [
-        { role: "system", content: member.systemPrompt },
-        { role: "user", content: userContent },
-      ],
-      temperature: 0.6,
-      max_tokens: 400,
-    });
-    return withImage(member.skill, completion.choices[0]?.message?.content?.trim() || fallback, task);
-  } catch (err) {
-    const reason = err instanceof Error ? err.message.split("\n")[0] : "unknown";
-    console.warn(`  [crew] ${member.name} brain unavailable, delivering offline (${reason})`);
-    return withImage(member.skill, fallback, task);
-  }
+  const out = await groqComplete(
+    [
+      { role: "system", content: member.systemPrompt },
+      { role: "user", content: userContent },
+    ],
+    { maxTokens: 400 },
+  );
+  return withImage(member.skill, out || fallback, task);
 }
 
 /** The image crew GENERATES a real image (Pollinations — free, keyless). */

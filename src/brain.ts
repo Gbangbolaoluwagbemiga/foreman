@@ -1,6 +1,4 @@
-import Groq from "groq-sdk";
-import { config } from "./config";
-import type { CrewMember, CrewRegistry } from "./crew";
+import { groqComplete, type CrewMember, type CrewRegistry } from "./crew";
 
 /** One unit of work the Foreman will hire a crew member to do. */
 export interface Subtask {
@@ -9,44 +7,33 @@ export interface Subtask {
   budgetShare: number; // 0..1, fractions of the total budget
 }
 
-let groq: Groq | null | undefined;
-function getGroq(): Groq | null {
-  if (groq === undefined) groq = config.groqApiKey ? new Groq({ apiKey: config.groqApiKey }) : null;
-  return groq;
-}
-
 /**
  * The Foreman's planning step: break a goal into subtasks, each mapped to a skill
- * that exists in the marketplace. Real reasoning via Groq; deterministic fallback
- * so the demo always runs.
+ * that exists in the marketplace. Real reasoning via Groq (with model fallback);
+ * deterministic heuristic if every model is unavailable, so the demo always runs.
  */
 export async function decompose(
   goal: string,
   availableSkills: string[],
 ): Promise<Subtask[]> {
-  const client = getGroq();
-  if (client) {
-    const system = `You are Foreman, an AI general contractor. Break the user's goal into 2-5 subtasks.
+  const system = `You are Foreman, an AI general contractor. Break the user's goal into 2-5 subtasks.
 Each subtask MUST use a skill from this list: ${availableSkills.join(", ")}.
 Return ONLY JSON: {"subtasks":[{"skill":"<one of the list>","description":"<what to do>","budgetShare":<0..1>}]}
 budgetShare values should sum to ~1. Order subtasks logically (e.g. research before writing).`;
+  const text = await groqComplete(
+    [
+      { role: "system", content: system },
+      { role: "user", content: `Goal: ${goal}` },
+    ],
+    { temperature: 0.4, maxTokens: 400, json: true },
+  );
+  if (text) {
     try {
-      const completion = await client.chat.completions.create({
-        model: config.groqModel,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: `Goal: ${goal}` },
-        ],
-        temperature: 0.4,
-        max_tokens: 400,
-        response_format: { type: "json_object" },
-      });
-      const text = completion.choices[0]?.message?.content?.trim() ?? "";
       const parsed = JSON.parse(text) as { subtasks?: Subtask[] };
       const valid = (parsed.subtasks ?? []).filter((s) => availableSkills.includes(s.skill));
       if (valid.length > 0) return normalizeShares(valid);
     } catch {
-      // Brain unavailable (rate limit / bad JSON) — fall back to the heuristic plan.
+      // bad JSON — fall back to the heuristic plan
     }
   }
   return mockDecompose(goal, availableSkills);

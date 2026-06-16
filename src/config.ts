@@ -26,6 +26,8 @@ export const arcTestnet = defineChain({
 export const config = {
   groqApiKey: process.env.GROQ_API_KEY?.trim() || "",
   groqModel: process.env.GROQ_MODEL?.trim() || "llama-3.3-70b-versatile",
+  // Tried automatically when the primary model is rate-limited (separate daily quota).
+  groqFallbackModel: process.env.GROQ_FALLBACK_MODEL?.trim() || "llama-3.1-8b-instant",
   settlementRail: (process.env.SETTLEMENT_RAIL?.trim() || "mock") as "mock" | "arc-usdc",
   usdcAddress: (process.env.USDC_ADDRESS?.trim() ||
     "0x3600000000000000000000000000000000000000") as `0x${string}`,
