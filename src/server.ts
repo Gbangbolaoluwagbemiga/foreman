@@ -4,6 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { config } from "./config";
 import { CrewRegistry, usingRealBrain, auditionHostedAgent, type RegisterInput } from "./crew";
+import { issueChallenge, verifyAndMint, ownsAccount, bearer, verifySession, issueApiKey, verifyApiKey } from "./auth";
 import { createLocalSigner } from "./signer";
 import { MockSettlement } from "./settlement";
 import { runJob, type Hirer, type Receipt } from "./orchestrator";
@@ -70,6 +71,26 @@ interface StandingOrder {
   lastNote?: string;
 }
 const orders: StandingOrder[] = [];
+
+// ── Agent API keys: owner address → active key metadata (the secret is never
+// stored; we keep only the keyId so keys can be listed + revoked). Lets a headless
+// agent (MCP / /delegate) spend from the owner's account within its caps + credit.
+type ApiKeyMeta = { id: string; createdAt: number; label?: string };
+const apiKeys = new Map<string, ApiKeyMeta[]>();
+
+/**
+ * Resolve which account a request may act on: an API key (headless agents) or a
+ * SIWE session (a signed-in human). Returns the owner address, or null if neither.
+ */
+function agentOwner(req: http.IncomingMessage): string | null {
+  const tok = bearer(req);
+  if (tok && tok.startsWith("fmn_")) {
+    const k = verifyApiKey(tok);
+    if (k && apiKeys.get(k.owner)?.some((m) => m.id === k.keyId)) return k.owner;
+    return null; // key was revoked or is invalid
+  }
+  return verifySession(tok);
+}
 
 const today = () => new Date().toISOString().slice(0, 10);
 function acct(user: string): Account {
@@ -176,7 +197,7 @@ let running = false;
 
 function cors(res: http.ServerResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
 }
 
@@ -195,6 +216,7 @@ function crewSnapshot() {
       skill: m.skill,
       priceUsdc: m.priceUsdc,
       reputation: m.reputation,
+      trend: m.repDelta ?? 0, // last reputation move — powers the live ▲/▼
       jobs: m.jobsCompleted,
       address: m.walletAddress,
       earnedUsdc: m.earnedUsdc,
@@ -231,8 +253,34 @@ async function probeX402(url: string): Promise<boolean> {
   }
 }
 
-// ── Durable state: accounts, history, ledger and counters survive restarts.
-// (registrations live in their own file via save/loadRegistered.)
+// ── Durable state: accounts, history, ledger, counters AND crew reputation
+// survive restarts — otherwise every decay/slash would be wiped on each boot and
+// reputation would mean nothing. (Registrations live in their own file too.)
+function stateSnapshot() {
+  return {
+    v: 2,
+    savedAt: Date.now(),
+    counters: { jobs: stats.jobs, payments: stats.payments, volumeUsdc: stats.volumeUsdc },
+    accounts: Object.fromEntries(accounts),
+    history: Object.fromEntries(history),
+    ledger,
+    orders,
+    apiKeys: Object.fromEntries(apiKeys),
+    crew: registry.members.map((m) => ({
+      name: m.name,
+      skill: m.skill,
+      reputation: m.reputation,
+      repDelta: m.repDelta,
+      jobsCompleted: m.jobsCompleted,
+      earnedUsdc: m.earnedUsdc,
+      lastActiveAt: m.lastActiveAt,
+      likes: m.likes,
+      dislikes: m.dislikes,
+      delisted: m.delisted,
+    })),
+  };
+}
+
 let saveTimer: NodeJS.Timeout | undefined;
 function saveState() {
   // debounce — a burst of mutations writes once.
@@ -241,22 +289,7 @@ function saveState() {
     saveTimer = undefined;
     try {
       fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-      fs.writeFileSync(
-        STATE_FILE,
-        JSON.stringify(
-          {
-            v: 1,
-            savedAt: Date.now(),
-            counters: { jobs: stats.jobs, payments: stats.payments, volumeUsdc: stats.volumeUsdc },
-            accounts: Object.fromEntries(accounts),
-            history: Object.fromEntries(history),
-            ledger,
-            orders,
-          },
-          null,
-          2,
-        ),
-      );
+      fs.writeFileSync(STATE_FILE, JSON.stringify(stateSnapshot(), null, 2));
     } catch (e) {
       console.warn("could not persist state:", (e as Error).message);
     }
@@ -275,6 +308,23 @@ function loadState() {
     for (const [k, v] of Object.entries(s.history ?? {})) history.set(k, v as Array<{ ts: number } & Receipt>);
     if (Array.isArray(s.ledger)) ledger.push(...s.ledger);
     if (Array.isArray(s.orders)) orders.push(...(s.orders as StandingOrder[]));
+    for (const [k, v] of Object.entries(s.apiKeys ?? {})) if (Array.isArray(v)) apiKeys.set(k.toLowerCase(), v as ApiKeyMeta[]);
+    // Reattach earned reputation onto the seeded/registered crew (matched by name
+    // + skill) so decay and slashing carry across restarts.
+    if (Array.isArray(s.crew)) {
+      for (const c of s.crew as Array<Record<string, unknown>>) {
+        const m = registry.members.find((x) => x.name === c.name && x.skill === c.skill);
+        if (!m) continue;
+        if (typeof c.reputation === "number") m.reputation = c.reputation;
+        if (typeof c.repDelta === "number") m.repDelta = c.repDelta;
+        if (typeof c.jobsCompleted === "number") m.jobsCompleted = c.jobsCompleted;
+        if (typeof c.earnedUsdc === "number") m.earnedUsdc = c.earnedUsdc;
+        if (typeof c.lastActiveAt === "number") m.lastActiveAt = c.lastActiveAt;
+        if (typeof c.likes === "number") m.likes = c.likes;
+        if (typeof c.dislikes === "number") m.dislikes = c.dislikes;
+        if (c.delisted) m.delisted = true;
+      }
+    }
     const n = accounts.size;
     if (n) console.log(`  restored ${n} account(s), ${ledger.length} payment(s) from state`);
   } catch {
@@ -302,7 +352,8 @@ async function handleRun(goal: string, budgetUsdc: number, user?: string) {
   if (user) {
     const c = checkSpend(user, budgetUsdc);
     if (!c.ok) {
-      broadcast({ type: "log", msg: `❌ Rejected: ${c.reason}.`, ts: Date.now() });
+      broadcast({ type: "declined", reason: c.reason, goal, budgetUsdc, ts: Date.now() });
+      broadcast({ type: "log", msg: `🛑 DECLINED: ${c.reason}.`, ts: Date.now() });
       return;
     }
   }
@@ -353,7 +404,11 @@ async function delegate(goal: string, budgetUsdc: number, user?: string): Promis
   if (running) return { error: "Foreman is busy with another job — try again in a moment." };
   if (user) {
     const c = checkSpend(user, budgetUsdc);
-    if (!c.ok) return { error: c.reason };
+    if (!c.ok) {
+      broadcast({ type: "declined", reason: c.reason, goal, budgetUsdc, ts: Date.now() });
+      broadcast({ type: "log", msg: `🛑 DECLINED: ${c.reason}.`, ts: Date.now() });
+      return { error: c.reason };
+    }
   }
   const receipt = await handleRun(goal, budgetUsdc, user);
   return receipt ? { receipt } : { error: "job failed" };
@@ -405,6 +460,7 @@ const server = http.createServer((req, res) => {
         if (vote !== "like" && vote !== "dislike") return json({ error: "vote must be 'like' or 'dislike'" }, 400);
         const m = registry.rate(String(agent ?? ""), vote);
         if (!m) return json({ error: "agent not found (or already delisted)" }, 404);
+        saveState();
         broadcast({ type: "crew", members: crewSnapshot() });
         broadcast({
           type: "log",
@@ -469,6 +525,32 @@ const server = http.createServer((req, res) => {
     req.on("close", () => clients.delete(res));
     return;
   }
+  // ── Sign-In-With-Ethereum: prove wallet ownership before touching the account ──
+  if (req.method === "GET" && url.pathname === "/auth/nonce") {
+    const address = url.searchParams.get("address") ?? "";
+    const ch = issueChallenge(address);
+    if (!ch) return json({ error: "valid address required" }, 400);
+    json(ch);
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/auth/verify") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () =>
+      void (async () => {
+        try {
+          const { address, signature } = JSON.parse(body || "{}");
+          const session = await verifyAndMint(String(address ?? ""), String(signature ?? ""));
+          if (!session) return json({ error: "signature did not verify (or challenge expired)" }, 401);
+          broadcast({ type: "log", msg: `🔐 ${session.address.slice(0, 6)}…${session.address.slice(-4)} verified wallet ownership`, ts: Date.now() });
+          json(session);
+        } catch {
+          json({ error: "bad json" }, 400);
+        }
+      })(),
+    );
+    return;
+  }
   if (req.method === "POST" && url.pathname === "/foreman/withdraw") {
     let body = "";
     req.on("data", (c) => (body += c));
@@ -504,7 +586,9 @@ const server = http.createServer((req, res) => {
           // ── Validation (keep junk/fake agents out) ──
           if (name.length < 2 || name.length > 40) return json({ error: "name must be 2–40 characters" }, 400);
           if (!/^[a-z0-9][a-z0-9 -]{0,23}$/.test(skill)) return json({ error: "skill must be a short word (letters, numbers, dashes)" }, 400);
-          if (!Number.isFinite(price) || price < 0.001 || price > 10) return json({ error: "price must be between 0.001 and 10 USDC" }, 400);
+          // Unproven newcomers are capped — you earn the right to charge more by delivering.
+          if (!Number.isFinite(price) || price < 0.001 || price > config.maxAgentPriceUsdc)
+            return json({ error: `price must be between 0.001 and ${config.maxAgentPriceUsdc} USDC (new agents are capped until they build a track record)` }, 400);
           if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) return json({ error: "a valid wallet address is required to receive earnings" }, 400);
 
           const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
@@ -569,6 +653,7 @@ const server = http.createServer((req, res) => {
         const g = String(goal || "").trim();
         if (!g) return json({ error: "goal required" }, 400);
         const u = typeof user === "string" && /^0x[0-9a-fA-F]{40}$/.test(user) ? user : undefined;
+        if (u && !ownsAccount(req, u)) return json({ error: "verify wallet ownership first" }, 401);
         void handleRun(g, Number(budget) || 1, u);
         json({ ok: true }, 202);
       } catch {
@@ -586,7 +671,17 @@ const server = http.createServer((req, res) => {
           const { goal, budget, user } = JSON.parse(body || "{}");
           const g = String(goal || "").trim();
           if (!g) return json({ error: "goal required" }, 400);
-          const u = typeof user === "string" && /^0x[0-9a-fA-F]{40}$/.test(user) ? user : undefined;
+          const requested = typeof user === "string" && /^0x[0-9a-fA-F]{40}$/.test(user) ? user.toLowerCase() : undefined;
+          // Spending from an account requires proof: an API key (headless agents)
+          // or a SIWE session. Only anonymous, account-less runs are unauthenticated.
+          const owner = agentOwner(req);
+          let u: string | undefined;
+          if (owner) {
+            if (requested && requested !== owner) return json({ error: "your API key does not own that account" }, 403);
+            u = owner;
+          } else if (requested) {
+            return json({ error: "an API key is required to delegate on behalf of an account — mint one in the Foreman app" }, 401);
+          }
           const out = await delegate(g, Number(budget) || 1, u);
           json(out, out.error ? 402 : 200);
         } catch {
@@ -608,6 +703,67 @@ const server = http.createServer((req, res) => {
     json(accountView(user));
     return;
   }
+  // Resolve the account behind an API key / session (so a headless agent holding
+  // only a key can discover its own account address).
+  if (req.method === "GET" && url.pathname === "/whoami") {
+    const owner = agentOwner(req);
+    if (!owner) return json({ error: "no valid API key or session" }, 401);
+    json({ owner });
+    return;
+  }
+  // ── Agent API keys (owner-only, SIWE-gated) ─────────────────────────────────
+  // List the active keys for an account (metadata only — never the secret).
+  if (req.method === "GET" && url.pathname === "/account/apikeys") {
+    const user = url.searchParams.get("user") ?? "";
+    if (!/^0x[0-9a-fA-F]{40}$/.test(user)) return json({ error: "valid user address required" }, 400);
+    if (!ownsAccount(req, user)) return json({ error: "verify wallet ownership first" }, 401);
+    json({ keys: apiKeys.get(user.toLowerCase()) ?? [] });
+    return;
+  }
+  // Mint a new key. Returned ONCE — the caller must copy it now.
+  if (req.method === "POST" && url.pathname === "/account/apikey") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      try {
+        const { user, label } = JSON.parse(body || "{}");
+        if (!/^0x[0-9a-fA-F]{40}$/.test(String(user ?? ""))) return json({ error: "valid user address required" }, 400);
+        if (!ownsAccount(req, String(user))) return json({ error: "verify wallet ownership first" }, 401);
+        const issued = issueApiKey(String(user));
+        if (!issued) return json({ error: "could not issue key" }, 400);
+        const owner = String(user).toLowerCase();
+        const list = apiKeys.get(owner) ?? [];
+        list.push({ id: issued.keyId, createdAt: Date.now(), label: typeof label === "string" ? label.slice(0, 40) : undefined });
+        apiKeys.set(owner, list);
+        saveState();
+        broadcast({ type: "log", msg: `🔑 Agent API key minted for ${owner.slice(0, 6)}…${owner.slice(-4)}`, ts: Date.now() });
+        json({ apiKey: issued.apiKey, keyId: issued.keyId }, 201);
+      } catch {
+        json({ error: "bad json" }, 400);
+      }
+    });
+    return;
+  }
+  // Revoke a key by id.
+  if (req.method === "POST" && url.pathname === "/account/apikey/revoke") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      try {
+        const { user, keyId } = JSON.parse(body || "{}");
+        if (!/^0x[0-9a-fA-F]{40}$/.test(String(user ?? ""))) return json({ error: "valid user address required" }, 400);
+        if (!ownsAccount(req, String(user))) return json({ error: "verify wallet ownership first" }, 401);
+        const owner = String(user).toLowerCase();
+        const list = (apiKeys.get(owner) ?? []).filter((m) => m.id !== String(keyId));
+        apiKeys.set(owner, list);
+        saveState();
+        json({ ok: true, keys: list });
+      } catch {
+        json({ error: "bad json" }, 400);
+      }
+    });
+    return;
+  }
   if (req.method === "POST" && url.pathname === "/account/controls") {
     let body = "";
     req.on("data", (c) => (body += c));
@@ -615,6 +771,7 @@ const server = http.createServer((req, res) => {
       try {
         const { user, suspended, perJobCap, dailyCap } = JSON.parse(body || "{}");
         if (!/^0x[0-9a-fA-F]{40}$/.test(String(user ?? ""))) return json({ error: "valid user address required" }, 400);
+        if (!ownsAccount(req, String(user))) return json({ error: "verify wallet ownership first" }, 401);
         const a = acct(String(user));
         if (typeof suspended === "boolean") a.suspended = suspended;
         if (perJobCap !== undefined && Number.isFinite(Number(perJobCap))) a.perJobCap = Math.max(0, Number(perJobCap));
@@ -636,6 +793,7 @@ const server = http.createServer((req, res) => {
       try {
         const { user, amount } = JSON.parse(body || "{}");
         if (!/^0x[0-9a-fA-F]{40}$/.test(String(user ?? ""))) return json({ error: "valid user address required" }, 400);
+        if (!ownsAccount(req, String(user))) return json({ error: "verify wallet ownership first" }, 401);
         const amt = Number(amount);
         if (!Number.isFinite(amt) || amt <= 0) return json({ error: "amount must be positive" }, 400);
         const a = acct(String(user));
@@ -673,6 +831,7 @@ const server = http.createServer((req, res) => {
       try {
         const { user, goal, budget, everyMinutes } = JSON.parse(body || "{}");
         if (!/^0x[0-9a-fA-F]{40}$/.test(String(user ?? ""))) return json({ error: "valid user address required" }, 400);
+        if (!ownsAccount(req, String(user))) return json({ error: "verify wallet ownership first" }, 401);
         const g = String(goal || "").trim();
         if (g.length < 4) return json({ error: "goal required" }, 400);
         const b = Number(budget);
@@ -700,6 +859,7 @@ const server = http.createServer((req, res) => {
     req.on("end", () => {
       try {
         const { user, id } = JSON.parse(body || "{}");
+        if (!ownsAccount(req, String(user ?? ""))) return json({ error: "verify wallet ownership first" }, 401);
         const i = orders.findIndex((o) => o.id === id && o.user.toLowerCase() === String(user ?? "").toLowerCase());
         if (i < 0) return json({ error: "order not found" }, 404);
         if (url.pathname === "/orders/delete") {
@@ -726,6 +886,19 @@ const server = http.createServer((req, res) => {
  */
 function startScheduler() {
   setInterval(() => {
+    // Reputation decay runs every tick (independent of the job lock): idle agents
+    // drift toward neutral, so the leaderboard reflects RECENT delivery. Only
+    // broadcasts when an integer rating actually moved, so it never spams.
+    const { changed, delisted } = registry.decay();
+    if (changed.length) {
+      broadcast({ type: "crew", members: crewSnapshot() });
+      for (const id of delisted) {
+        const m = registry.members.find((x) => x.id === id);
+        if (m) broadcast({ type: "log", msg: `⬇️ ${m.name} decayed below the bar (idle too long) — delisted; "${m.skill}" is open again.`, ts: Date.now() });
+      }
+      saveState();
+    }
+
     if (running) return; // respect the single-job lock
     const now = Date.now();
     const due = orders.find((o) => o.active && now - o.lastRunAt >= o.everyMinutes * 60_000);
@@ -758,7 +931,7 @@ async function start() {
     saveTimer = undefined;
     try {
       fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-      fs.writeFileSync(STATE_FILE, JSON.stringify({ v: 1, savedAt: Date.now(), counters: { jobs: stats.jobs, payments: stats.payments, volumeUsdc: stats.volumeUsdc }, accounts: Object.fromEntries(accounts), history: Object.fromEntries(history), ledger, orders }, null, 2));
+      fs.writeFileSync(STATE_FILE, JSON.stringify(stateSnapshot(), null, 2));
     } catch {
       /* best effort */
     }
@@ -769,13 +942,21 @@ async function start() {
   if (RAIL === "gateway") {
     const { startCrewServer } = await import("./gateway/crewServer");
     const { createForemanGateway } = await import("./gateway/foreman");
+    const { createForemanGatewayMPC } = await import("./gateway/foremanMpc");
+    const { circleCustodyReady } = await import("./gateway/circleSigner");
     const { gatewayHire } = await import("./gateway/hirer");
     const { generatePrivateKey } = await import("viem/accounts");
 
     const CREW_PORT = PORT + 1;
     await startCrewServer(registry, CREW_PORT);
-    const gateway = createForemanGateway((config.foremanPrivateKey || generatePrivateKey()) as `0x${string}`);
-    foremanAddress = gateway.address;
+    // Custody switch: Circle MPC treasury (no raw key) when configured, else the
+    // local raw-key wallet. Both satisfy ForemanGateway, so the rail is identical.
+    const useMpc = config.walletCustody === "circle" && circleCustodyReady();
+    const gateway = useMpc
+      ? createForemanGatewayMPC()
+      : createForemanGateway((config.foremanPrivateKey || generatePrivateKey()) as `0x${string}`);
+    if (useMpc) console.log("  🔐 treasury custody: Circle MPC (no raw key signs payments)");
+    foremanAddress = gateway.address as `0x${string}`;
     gatewayClient = gateway;
     hireFn = gatewayHire(gateway, `http://localhost:${CREW_PORT}`);
 
@@ -806,9 +987,10 @@ async function start() {
     throw err;
   });
   server.listen(PORT, () => {
-    console.log(`\n  🟢 Foreman engine API → http://localhost:${PORT}   rail: ${RAIL}`);
-    console.log(`     crew: ${registry.members.length} · credit: score-based 10–50% · standing orders: on · persist: on`);
-    console.log(`     GET /stats /crew /activity /history /account /orders /events   POST /run /delegate /orders /account/*\n`);
+    const custody = config.walletCustody === "circle" ? "circle-MPC" : "local-key";
+    console.log(`\n  🟢 Foreman engine API → http://localhost:${PORT}   rail: ${RAIL} · custody: ${custody}`);
+    console.log(`     crew: ${registry.members.length} · credit: score-based 10–50% · standing orders: on · persist: on · auth: SIWE`);
+    console.log(`     GET /stats /crew /activity /history /account /orders /events   POST /run /delegate /orders /account/* /auth/*\n`);
   });
 }
 

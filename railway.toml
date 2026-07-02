@@ -1,0 +1,17 @@
+# Railway config for the Foreman engine.
+# Deploy from the Dockerfile; Railway injects PORT. Set the secrets below in the
+# service's Variables tab (never commit them):
+#   GROQ_API_KEY          — Groq planning/agent LLM
+#   FOREMAN_PRIVATE_KEY   — the agent wallet that settles USDC (0x…)
+#   RPC                   — Arc authenticated RPC (from ~/.arc-canteen/env)
+#   SETTLEMENT_RAIL       — arc-usdc
+# And attach a Volume mounted at /app/data so state (credit scores, reputation) persists.
+
+[build]
+builder = "dockerfile"
+
+[deploy]
+healthcheckPath = "/stats"
+healthcheckTimeout = 60
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 5

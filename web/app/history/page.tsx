@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAccount } from "wagmi";
 import { useAppKit } from "@reown/appkit/react";
-import { getHistory, type HistoryJob } from "@/lib/engine";
+import { getHistory, usd, type HistoryJob } from "@/lib/engine";
 import { Rendered } from "../components/Rendered";
 import { VerifyLink } from "../components/VerifyLink";
 
@@ -56,7 +56,7 @@ export default function HistoryPage() {
                   <div className="mb-3 flex flex-wrap gap-2 font-mono text-xs text-muted">
                     {j.lineItems.map((li, k) => (
                       <span key={k} className="flex items-center gap-1.5 rounded-md border border-edge bg-panel2 px-2 py-0.5">
-                        {li.crew} · {li.skill} · ${li.priceUsdc.toFixed(2)}
+                        {li.crew} · {li.skill} · ${usd(li.priceUsdc)}
                         <VerifyLink paymentRef={li.paymentRef} recipient={li.recipient} />
                       </span>
                     ))}

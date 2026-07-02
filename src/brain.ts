@@ -42,12 +42,27 @@ Return ONLY JSON: {"subtasks":[{"skill","description","budgetShare"}]}. budgetSh
     try {
       const parsed = JSON.parse(text) as { subtasks?: Subtask[] };
       const valid = (parsed.subtasks ?? []).filter((s) => availableSkills.includes(s.skill));
-      if (valid.length > 0) return normalizeShares(valid);
+      if (valid.length > 0) return normalizeShares(dedupeBySkill(valid));
     } catch {
       // bad JSON — fall back to the heuristic plan
     }
   }
   return mockDecompose(goal, availableSkills);
+}
+
+/**
+ * One skill = one hire per job. If the planner returns the same skill twice
+ * ("coding → coding"), collapse them: keep the first description and merge the
+ * budget shares. A single coding task is done by ONE coder, not two.
+ */
+function dedupeBySkill(subtasks: Subtask[]): Subtask[] {
+  const bySkill = new Map<string, Subtask>();
+  for (const s of subtasks) {
+    const existing = bySkill.get(s.skill);
+    if (existing) existing.budgetShare += s.budgetShare > 0 ? s.budgetShare : 0;
+    else bySkill.set(s.skill, { ...s });
+  }
+  return [...bySkill.values()];
 }
 
 /** Pick the best crew member for a subtask: affordable first, then highest reputation, then cheapest. */

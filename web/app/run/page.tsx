@@ -3,12 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useAccount } from "wagmi";
-import { ENGINE, rateAgent, runJob } from "@/lib/engine";
+import { ENGINE, rateAgent, runJob, usd } from "@/lib/engine";
 import { ThumbsUp, ThumbsDown } from "lucide-react";
 import { LiveDot } from "../components/ui";
 import { Rendered } from "../components/Rendered";
 import { ForemanWallet } from "../components/ForemanWallet";
 import { AgentControls } from "../components/AgentControls";
+import { ApiKeys } from "../components/ApiKeys";
+import { useVerified } from "../components/useSession";
 import { StandingOrders } from "../components/StandingOrders";
 import { VerifyLink } from "../components/VerifyLink";
 
@@ -36,11 +38,15 @@ export default function RunPage() {
   const [budget, setBudget] = useState(1);
   const [logs, setLogs] = useState<string[]>([]);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [declined, setDeclined] = useState<{ reason: string; goal: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [votes, setVotes] = useState<Record<string, { vote: "like" | "dislike"; reputation: number; delisted: boolean }>>({});
   const logRef = useRef<HTMLDivElement>(null);
   const { address } = useAccount();
+  const verified = useVerified(address);
+  // Connected but not verified → account actions are gated (server returns 401).
+  const needsVerify = !!address && !verified;
 
   async function vote(skill: string, v: "like" | "dislike") {
     try {
@@ -59,7 +65,12 @@ export default function RunPage() {
       else if (e.type === "job-start") {
         setLogs([`▶ new job: ${e.goal}`]);
         setReceipt(null);
+        setDeclined(null);
         setShowBreakdown(false);
+      } else if (e.type === "declined") {
+        setDeclined({ reason: e.reason, goal: e.goal });
+        setReceipt(null);
+        setBusy(false);
       } else if (e.type === "receipt") {
         setReceipt(e.receipt);
         setBusy(false);
@@ -76,6 +87,7 @@ export default function RunPage() {
   async function go() {
     setBusy(true);
     setReceipt(null);
+    setDeclined(null);
     setLogs(["⏳ sending job to the Foreman…"]);
     try {
       const r = await runJob(goal, budget, address);
@@ -111,6 +123,7 @@ export default function RunPage() {
         <ForemanWallet />
         <AgentControls />
         <StandingOrders />
+        <ApiKeys />
       </div>
 
       <div className="mt-5 grid gap-5 lg:grid-cols-2">
@@ -134,10 +147,11 @@ export default function RunPage() {
             />
             <button
               onClick={go}
-              disabled={busy}
+              disabled={busy || needsVerify}
+              title={needsVerify ? "Verify wallet ownership first (in the balance bar above)" : ""}
               className="glow ml-auto rounded-lg bg-accent px-5 py-2 font-medium text-[#04130c] disabled:opacity-50"
             >
-              {busy ? "Working…" : "Hire a crew →"}
+              {busy ? "Working…" : needsVerify ? "Verify to run →" : "Hire a crew →"}
             </button>
           </div>
         </div>
@@ -152,7 +166,7 @@ export default function RunPage() {
               <span className="text-muted">waiting for a job…</span>
             ) : (
               logs.map((l, i) => (
-                <div key={i} className="text-ink/90">
+                <div key={i} className={/^🛑|^❌/.test(l) ? "font-medium text-rose-400" : "text-ink/90"}>
                   {l}
                 </div>
               ))
@@ -160,6 +174,29 @@ export default function RunPage() {
           </div>
         </div>
       </div>
+
+      {/* DECLINED — the control plane blocked the spend (kill switch or a cap) */}
+      {declined && (
+        <div className="rise mt-6 overflow-hidden rounded-xl border-2 border-rose-500/70 bg-rose-500/5">
+          <div className="flex items-center gap-3 border-b border-rose-500/30 px-5 py-4">
+            <span className="grid h-9 w-9 place-items-center rounded-full bg-rose-500/20 text-lg">🛑</span>
+            <div>
+              <div className="text-lg font-semibold tracking-tight text-rose-300">DECLINED</div>
+              <div className="text-xs text-rose-300/70">the control plane blocked this spend before any USDC moved</div>
+            </div>
+            <span className="ml-auto rounded-md border border-rose-500/40 px-2 py-0.5 font-mono text-[11px] uppercase text-rose-300">no payment</span>
+          </div>
+          <div className="px-5 py-4 text-sm">
+            <p className="text-ink/90">
+              <span className="text-muted">Reason:</span> {declined.reason}
+            </p>
+            <p className="mt-1 truncate text-xs text-muted">job: “{declined.goal}”</p>
+            <p className="mt-3 text-xs text-muted">
+              Turn off the kill switch or raise the cap in <span className="text-ink">operator controls</span> above, then try again.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Receipt */}
       {receipt && (
@@ -191,7 +228,7 @@ export default function RunPage() {
                   <div className="flex items-center gap-2 border-b border-edge px-4 py-2.5 text-sm">
                     <span className="font-medium">{li.crew}</span>
                     <span className="text-xs text-muted">{li.skill}</span>
-                    <span className="ml-auto font-mono text-accent">${li.priceUsdc.toFixed(2)}</span>
+                    <span className="ml-auto font-mono text-accent">${usd(li.priceUsdc)}</span>
                   </div>
                   <div className="max-h-72 overflow-y-auto px-4 py-3">
                     <Rendered text={li.deliverable} />

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useAccount } from "wagmi";
 import { CalendarClock, Play, Pause, Trash2, Plus } from "lucide-react";
 import { createOrder, deleteOrder, getOrders, toggleOrder, type StandingOrder } from "@/lib/engine";
+import { useVerified } from "./useSession";
 
 /**
  * Standing orders — what the card is *for*: set the agent to do recurring work on
@@ -12,6 +13,7 @@ import { createOrder, deleteOrder, getOrders, toggleOrder, type StandingOrder } 
  */
 export function StandingOrders() {
   const { address, isConnected } = useAccount();
+  const verified = useVerified(address);
   const [orders, setOrders] = useState<StandingOrder[]>([]);
   const [goal, setGoal] = useState("Research the latest AI agent news and summarize the top 3 items");
   const [budget, setBudget] = useState(0.1);
@@ -86,8 +88,8 @@ export function StandingOrders() {
               <span className="text-xs text-muted">min</span>
               <label className="text-xs uppercase tracking-wide text-muted">budget $</label>
               <input type="number" step="0.05" value={budget} onChange={(e) => setBudget(Number(e.target.value))} className="w-20 rounded-md border border-edge bg-panel px-2 py-1.5 outline-none focus:border-accent/50" />
-              <button onClick={add} disabled={busy || goal.trim().length < 4} className="ml-auto inline-flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-[#04130c] disabled:opacity-50">
-                <Plus size={13} /> {busy ? "Adding…" : "Schedule it"}
+              <button onClick={add} disabled={busy || !verified || goal.trim().length < 4} title={!verified ? "Verify wallet ownership first" : ""} className="ml-auto inline-flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-[#04130c] disabled:opacity-50">
+                <Plus size={13} /> {busy ? "Adding…" : verified ? "Schedule it" : "Verify to schedule"}
               </button>
             </div>
             {note && <div className="mt-2 text-xs text-warn">⚠ {note}</div>}
@@ -108,10 +110,10 @@ export function StandingOrders() {
                       {o.lastNote && <span className="ml-1 opacity-70">· {o.lastNote}</span>}
                     </div>
                   </div>
-                  <button onClick={() => address && toggleOrder(address, o.id).then(setOrders)} title={o.active ? "Pause" : "Resume"} className="rounded-md border border-edge p-1.5 text-muted hover:text-ink">
+                  <button onClick={() => address && toggleOrder(address, o.id).then(setOrders).catch(() => {})} disabled={!verified} title={!verified ? "Verify wallet ownership first" : o.active ? "Pause" : "Resume"} className="rounded-md border border-edge p-1.5 text-muted hover:text-ink disabled:opacity-40">
                     {o.active ? <Pause size={13} /> : <Play size={13} />}
                   </button>
-                  <button onClick={() => address && deleteOrder(address, o.id).then(setOrders)} title="Delete" className="rounded-md border border-edge p-1.5 text-muted hover:text-warn">
+                  <button onClick={() => address && deleteOrder(address, o.id).then(setOrders).catch(() => {})} disabled={!verified} title={!verified ? "Verify wallet ownership first" : "Delete"} className="rounded-md border border-edge p-1.5 text-muted hover:text-warn disabled:opacity-40">
                     <Trash2 size={13} />
                   </button>
                 </div>

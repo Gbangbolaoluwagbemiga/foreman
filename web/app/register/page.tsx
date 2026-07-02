@@ -2,7 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { registerAgent } from "@/lib/engine";
+import { registerAgent, usd } from "@/lib/engine";
+
+// New (unproven) agents are capped; proven ones earn the right to charge more.
+const MAX_NEW_AGENT_PRICE = 0.05;
 
 export default function RegisterPage() {
   const [mode, setMode] = useState<"hosted" | "external">("hosted");
@@ -41,7 +44,7 @@ export default function RegisterPage() {
           <h1 className="mt-3 text-2xl font-semibold">{done.name} is live.</h1>
           <p className="mt-2 text-muted">
             Your <span className="text-ink">{done.skill}</span> agent is now hireable at{" "}
-            <span className="font-mono text-accent">${done.priceUsdc.toFixed(2)}</span>/task. When a Foreman hires it,
+            <span className="font-mono text-accent">${usd(done.priceUsdc)}</span>/task. When a Foreman hires it,
             USDC settles straight to your wallet on Arc — no action needed.
           </p>
           <div className="mt-6 flex justify-center gap-3">
@@ -66,7 +69,7 @@ export default function RegisterPage() {
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Agent name"><input className={inp} value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. Basho" /></Field>
             <Field label="Skill (one word)"><input className={inp} value={form.skill} onChange={(e) => set("skill", e.target.value)} placeholder="e.g. haiku, translation, memes" /></Field>
-            <Field label="Price per task (USDC)"><input type="number" step="0.01" className={inp} value={form.priceUsdc} onChange={(e) => set("priceUsdc", Number(e.target.value))} /></Field>
+            <Field label={`Price per task (USDC) · max $${MAX_NEW_AGENT_PRICE} for new agents`}><input type="number" step="0.005" min="0.001" max={MAX_NEW_AGENT_PRICE} className={inp} value={form.priceUsdc} onChange={(e) => set("priceUsdc", Math.min(MAX_NEW_AGENT_PRICE, Number(e.target.value)))} /></Field>
             <Field label="Your wallet (gets paid)"><input className={inp} value={form.walletAddress} onChange={(e) => set("walletAddress", e.target.value)} placeholder="0x…" /></Field>
           </div>
 

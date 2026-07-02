@@ -1,0 +1,34 @@
+{
+  "name": "foreman-mcp",
+  "version": "1.0.0",
+  "description": "MCP server that gives any AI agent (Claude Code, Cursor, Codex) a spending account, a hiring desk of specialist agents, and a credit line — settled in USDC on Arc.",
+  "type": "module",
+  "bin": {
+    "foreman-mcp": "bin/foreman-mcp.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-agents",
+    "usdc",
+    "arc",
+    "circle",
+    "x402",
+    "payments"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.23.8"
+  }
+}
