@@ -7,6 +7,8 @@ import { useAppKit } from "@reown/appkit/react";
 import { Wallet, Plus, ArrowDownToLine } from "lucide-react";
 import { ARCSCAN, getForeman, getAccount, reportDeposit, withdrawForeman, type ForemanInfo, type Account } from "@/lib/engine";
 import { USDC, arcTestnet } from "@/lib/wagmi";
+import { VerifyOwnership } from "./VerifyOwnership";
+import { useVerified } from "./useSession";
 
 /**
  * Your Foreman account: what you deposited, spent, and have left — plus an
@@ -23,6 +25,7 @@ export function ForemanWallet() {
   const reportedTx = useRef<string | null>(null);
 
   const { address, isConnected } = useAccount();
+  const verified = useVerified(address);
   const chainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
   const { open } = useAppKit();
@@ -172,16 +175,17 @@ export function ForemanWallet() {
         <div className="ml-auto flex items-center gap-2">
           {connected ? (
             <>
+              <VerifyOwnership />
               <span className="hidden text-xs text-muted md:inline">wallet {walletUsdc ?? "…"}</span>
               <input
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 className="w-16 rounded-lg border border-edge bg-bg px-2 py-1.5 text-sm outline-none focus:border-accent/50"
               />
-              <button onClick={fund} disabled={isPending} className="inline-flex items-center gap-1 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-[#04130c] disabled:opacity-50">
+              <button onClick={fund} disabled={isPending || !verified} title={!verified ? "Verify wallet ownership first" : ""} className="inline-flex items-center gap-1 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-[#04130c] disabled:opacity-50">
                 <Plus size={13} /> {isPending ? "Confirm…" : owed > 0 ? "Repay/Fund" : "Fund"}
               </button>
-              <button onClick={withdraw} disabled={withdrawing || (account?.balance ?? 0) <= 0} title={(account?.balance ?? 0) <= 0 ? "No balance to withdraw" : `Up to ${(account?.balance ?? 0).toFixed(2)}`} className="inline-flex items-center gap-1 rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-xs hover:border-accent/40 disabled:opacity-40">
+              <button onClick={withdraw} disabled={withdrawing || !verified || (account?.balance ?? 0) <= 0} title={!verified ? "Verify wallet ownership first" : (account?.balance ?? 0) <= 0 ? "No balance to withdraw" : `Up to ${(account?.balance ?? 0).toFixed(2)}`} className="inline-flex items-center gap-1 rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-xs hover:border-accent/40 disabled:opacity-40">
                 <ArrowDownToLine size={13} /> {withdrawing ? "…" : "Withdraw"}
               </button>
             </>

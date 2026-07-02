@@ -63,6 +63,7 @@ export default function DashboardPage() {
                   <span className="w-28 text-muted">{m.skill}</span>
                   <RepBar value={m.reputation} />
                   <span className="font-mono text-xs text-muted">{m.reputation}</span>
+                  <RepTrend trend={m.trend} />
                   <span className="ml-auto font-mono text-xs text-muted">{m.jobs} jobs</span>
                 </div>
               ))}
@@ -76,7 +77,7 @@ export default function DashboardPage() {
               <span className="text-muted">no activity yet — run a job</span>
             ) : (
               feed.map((l, i) => (
-                <div key={i} className="text-ink/85">
+                <div key={i} className={/^🛑|^❌/.test(l) ? "font-medium text-rose-400" : "text-ink/85"}>
                   {l}
                 </div>
               ))
@@ -120,5 +121,17 @@ export default function DashboardPage() {
         </Panel>
       </div>
     </div>
+  );
+}
+
+/** The last reputation move: ▲ on a win, ▼ on a slash or idle decay. */
+function RepTrend({ trend }: { trend?: number }) {
+  if (!trend) return <span className="w-9" />;
+  const up = trend > 0;
+  return (
+    <span className={`w-9 font-mono text-xs ${up ? "text-accent" : "text-rose-400"}`} title={up ? "gained reputation" : "slashed / decayed"}>
+      {up ? "▲" : "▼"}
+      {Math.abs(trend)}
+    </span>
   );
 }

@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -12,34 +13,33 @@ import { z } from "zod";
  *   FOREMAN_API_KEY  the agent's key (mint it in the Foreman web app after verifying
  *                    wallet ownership). Authorizes spend from — and only from — that
  *                    account, inside its caps + credit line.
- *   FOREMAN_USER     optional: the account address, for read-only display. Derived
- *                    from the API key automatically if omitted.
+ *   FOREMAN_USER     optional: the account address for read-only display; derived
+ *                    from the API key if omitted.
+ *
+ * NOTE: the canonical source is ../../src/mcp.ts. Keep this JS copy in sync — it is
+ * the standalone, dependency-light artifact published to npm as @foreman/mcp.
  */
 const FOREMAN_URL = process.env.FOREMAN_URL || "http://localhost:8799";
 const FOREMAN_API_KEY = process.env.FOREMAN_API_KEY || "";
 let FOREMAN_USER = process.env.FOREMAN_USER || "";
 
-function authHeaders(): Record<string, string> {
+function authHeaders() {
   return FOREMAN_API_KEY ? { Authorization: `Bearer ${FOREMAN_API_KEY}` } : {};
 }
 
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(`${FOREMAN_URL}${path}`, {
-    ...init,
-    headers: { ...(init?.headers as Record<string, string> | undefined), ...authHeaders() },
-  });
-  return (await r.json()) as T;
+async function api(path, init) {
+  const r = await fetch(`${FOREMAN_URL}${path}`, { ...init, headers: { ...(init?.headers ?? {}), ...authHeaders() } });
+  return await r.json();
 }
 
-// If we have a key but no explicit account, resolve it from the key.
-async function resolveUser(): Promise<string> {
+async function resolveUser() {
   if (FOREMAN_USER) return FOREMAN_USER;
   if (!FOREMAN_API_KEY) return "";
   try {
-    const { owner } = await api<{ owner?: string }>("/whoami");
+    const { owner } = await api("/whoami");
     if (owner) FOREMAN_USER = owner;
   } catch {
-    /* ignore — stays anonymous */
+    /* stays anonymous */
   }
   return FOREMAN_USER;
 }
@@ -55,7 +55,7 @@ server.registerTool(
     inputSchema: { skill: z.string().optional().describe("Optional: filter by skill, e.g. 'coding'") },
   },
   async ({ skill }) => {
-    const { members } = await api<{ members: { name: string; skill: string; priceUsdc: number; reputation: number; registered?: boolean }[] }>("/crew");
+    const { members } = await api("/crew");
     const list = (members ?? []).filter((m) => !skill || m.skill.includes(skill.toLowerCase()));
     const text =
       list.map((m) => `- ${m.name} · ${m.skill} · $${m.priceUsdc}/task · reputation ${m.reputation}${m.registered ? " (community)" : ""}`).join("\n") ||
@@ -76,11 +76,11 @@ server.registerTool(
     },
   },
   async ({ goal, budget }) => {
-    // The API key (Authorization header) identifies the account; no need to pass user.
-    const out = await api<{ receipt?: { result: string; spentUsdc: number; lineItems: { crew: string; skill: string; priceUsdc: number; paymentRef: string }[] }; error?: string }>(
-      "/delegate",
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal, budget: budget ?? 1 }) },
-    );
+    const out = await api("/delegate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ goal, budget: budget ?? 1 }),
+    });
     if (out.error || !out.receipt) {
       return { content: [{ type: "text", text: `Foreman couldn't run this: ${out.error ?? "unknown error"}` }], isError: true };
     }
@@ -104,12 +104,12 @@ server.registerTool(
     if (!user) {
       return { content: [{ type: "text", text: "Running anonymously (no FOREMAN_API_KEY set) — no account or credit line. Mint an API key in the Foreman app (after verifying wallet ownership) and set FOREMAN_API_KEY to spend from your account and earn credit." }] };
     }
-    const a = await api<{ balance: number; spent: number; creditAvailable: number; spendable: number; owed: number }>(`/account?user=${user}`);
+    const a = await api(`/account?user=${user}`);
     return {
       content: [
         {
           type: "text",
-          text: `Foreman account ${user}:\n- balance: $${a.balance.toFixed(2)}\n- spent (lifetime): $${a.spent.toFixed(2)}\n- credit available: $${a.creditAvailable.toFixed(2)} (earned from track record)\n- owed: $${a.owed.toFixed(2)}\n- spendable now: $${a.spendable.toFixed(2)}`,
+          text: `Foreman account ${FOREMAN_USER}:\n- balance: $${a.balance.toFixed(2)}\n- spent (lifetime): $${a.spent.toFixed(2)}\n- credit available: $${a.creditAvailable.toFixed(2)} (earned from track record)\n- owed: $${a.owed.toFixed(2)}\n- spendable now: $${a.spendable.toFixed(2)}`,
         },
       ],
     };

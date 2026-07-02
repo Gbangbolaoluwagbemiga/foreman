@@ -20,6 +20,8 @@ export interface CrewMember {
   reliability: number; // 0..1 intrinsic quality/SLA — drives reputation over time
   jobsCompleted: number;
   earnedUsdc: number;
+  lastActiveAt?: number; // last time reputation moved (job/rating) — drives idle decay
+  repDelta?: number; // last change in reputation — powers the live ▲/▼ trend
   systemPrompt: string;
   endpointUrl?: string; // bring-your-own x402 seller
   registered?: boolean;
@@ -39,19 +41,21 @@ type Seed = Pick<CrewMember, "name" | "skill" | "description" | "priceUsdc" | "r
 // are folded in (fact-checking → research, SEO → copywriting, code review → coding,
 // summarizing → editing) so the Foreman hires fewer, more capable agents.
 const SEED_CREW: Seed[] = [
-  { name: "Scout", skill: "research", priceUsdc: 0.02, reputation: 72,
+  { name: "Scout", skill: "research", priceUsdc: 0.004, reputation: 72,
     description: "Researches any topic and sanity-checks the facts.",
-    systemPrompt: "You are Scout, a fast research + fact-check specialist. Return concise, concrete findings: 2-4 key facts, and flag any dubious claim with a one-line plausibility note. No fluff." },
-  { name: "Quill", skill: "copywriting", priceUsdc: 0.1, reputation: 81,
+    systemPrompt: "You are Scout, a fast research + fact-check specialist. Return concise, concrete findings: 3-5 key facts as bullet points, each specific and verifiable, and flag any dubious claim with a one-line plausibility note. No fluff, no preamble." },
+  { name: "Quill", skill: "copywriting", priceUsdc: 0.02, reputation: 81,
     description: "Writes punchy marketing copy, optimized for search.",
-    systemPrompt: "You are Quill, an expert copywriter with SEO instincts. Produce vivid, concise, on-brand copy for the task; when relevant, weave in natural keywords and suggest a title/meta line. No preamble." },
-  { name: "Codex", skill: "coding", priceUsdc: 0.08, reputation: 80,
+    systemPrompt: "You are Quill, an expert copywriter with SEO instincts. Produce vivid, concise, on-brand copy that actually fulfils the brief; when relevant, weave in natural keywords and suggest a title/meta line. Deliver the finished copy, not a description of it. No preamble." },
+  { name: "Codex", skill: "coding", priceUsdc: 0.016, reputation: 80,
     description: "Writes clean, correct code — and reviews it for bugs.",
-    systemPrompt: "You are Codex, an expert programmer and reviewer. If asked to write code, output exactly what's asked in a fenced block (minimal, correct). If asked to review, list concrete issues and fixes succinctly. No tutorials, no padding." },
-  { name: "Polish", skill: "editing", priceUsdc: 0.02, reputation: 78,
+    systemPrompt:
+      "You are Codex, an expert software engineer. Write COMPLETE, correct, idiomatic code in the EXACT language/framework the request implies — e.g. a Solidity smart contract must be written in Solidity (pragma + contract), NOT Python. Put the code in one fenced block with the right language tag. Include only what's needed; no tutorials, no filler.\n\nYou generate code — you do NOT execute, deploy, or run anything, and you must NEVER ask for, invent, or embed a real private key, seed phrase, or wallet secret. If the request involves deploying/running/'use my wallet keys', deliver the full ready-to-use code, then a short 'To deploy yourself:' note with the exact commands (e.g. Foundry/Hardhat) the user runs — and one line reminding them to never paste a private key to any agent. If asked to review code, list concrete issues and fixes succinctly.",
+  },
+  { name: "Polish", skill: "editing", priceUsdc: 0.004, reputation: 78,
     description: "Proofreads, tightens, and summarizes text.",
-    systemPrompt: "You are Polish, a meticulous editor. Proofread for grammar, flow, and clarity without changing meaning; if asked to summarize, return the tightest faithful summary. Return only the edited/summarized text." },
-  { name: "Muse", skill: "image-prompt", priceUsdc: 0.04, reputation: 64,
+    systemPrompt: "You are Polish, a meticulous editor. Proofread for grammar, flow, and clarity without changing meaning; if asked to summarize, return the tightest faithful summary. Return only the edited/summarized text, nothing else." },
+  { name: "Muse", skill: "image-prompt", priceUsdc: 0.008, reputation: 64,
     description: "Generates a header/hero image for the brief.",
     systemPrompt: "You are Muse, an art director. Reply with ONLY a vivid visual description of the image to generate — concrete subject, setting, style, lighting, mood. One sentence, no preamble, no quotes, and do NOT restate or mention the task/brief." },
 ];
@@ -125,6 +129,7 @@ export class CrewRegistry {
       reliability: RELIABILITY[s.name] ?? 0.9,
       jobsCompleted: 0,
       earnedUsdc: 0,
+      lastActiveAt: Date.now(),
     }));
     return new CrewRegistry(members);
   }
@@ -141,12 +146,14 @@ export class CrewRegistry {
       name: input.name.slice(0, 32),
       skill: input.skill.trim().toLowerCase(),
       description: (input.systemPrompt ?? `External ${input.skill} agent`).slice(0, 90),
-      priceUsdc: Math.max(0.001, input.priceUsdc),
+      // Clamp to the platform cap — an unproven newcomer can't list itself high.
+      priceUsdc: Math.min(config.maxAgentPriceUsdc, Math.max(0.001, input.priceUsdc)),
       walletAddress: input.walletAddress as `0x${string}`,
       reputation: startRep,
       reliability: 0.9, // newcomers start optimistic; the market learns the truth
       jobsCompleted: 0,
       earnedUsdc: 0,
+      lastActiveAt: Date.now(),
       systemPrompt: input.systemPrompt ?? `You are a helpful ${input.skill} specialist. Be concise and concrete.`,
       endpointUrl: input.endpointUrl?.trim() || undefined,
       registered: true,
@@ -172,13 +179,65 @@ export class CrewRegistry {
   recordOutcome(id: string, success: boolean, amountUsdc = 0): void {
     const m = this.members.find((x) => x.id === id);
     if (!m) return;
+    const before = m.reputation;
     m.jobsCompleted += 1;
-    // Reputation = exponential moving average of delivery quality. Converges to the
-    // agent's true reliability and visibly dips when a delivery comes in below par.
-    m.reputation = Math.round(m.reputation * 0.8 + (success ? 100 : 0) * 0.2);
+    m.lastActiveAt = Date.now();
+    // Reputation reacts to the LAST delivery (EWMA, converging to true reliability):
+    //   • success            → pulled toward 100.
+    //   • PAID but below par  → SLASHED hard. Taking the money and under-delivering
+    //                           is the worst breach: at nano scale there's no escrow,
+    //                           so the only recourse is to hit reputation sharply.
+    //   • unavailable (unpaid)→ penalised, but lighter than a paid breach.
+    if (success) {
+      m.reputation = Math.round(m.reputation * 0.8 + 100 * 0.2);
+    } else if (amountUsdc > 0) {
+      m.reputation = Math.round(m.reputation * 0.6); // paid breach → −40% slash
+    } else {
+      m.reputation = Math.round(m.reputation * 0.75); // no-show → −25%
+    }
+    m.repDelta = m.reputation - before;
     // Paid via x402 regardless (pay-first) — at nano scale, reputation is the recourse.
     m.earnedUsdc = Number((m.earnedUsdc + amountUsdc).toFixed(6));
     if (m.reputation < 50) m.delisted = true;
+  }
+
+  /**
+   * Reputation is perishable. An agent that stops delivering slowly drifts back
+   * toward a neutral baseline (50) — recent successful work is the ONLY thing that
+   * keeps a high rating high, so the leaderboard always answers "what have you done
+   * lately?", not "what did you do once". Only erodes ratings ABOVE neutral (going
+   * idle never punishes a struggling agent further). Integer-stable: idle time
+   * accumulates until it's worth a whole point, so frequent ticks don't stall decay.
+   * Returns the ids whose rating moved and those that fell below the bar (delisted).
+   */
+  decay(now = Date.now(), halfLifeMs = config.repDecayHalfLifeMs): { changed: string[]; delisted: string[] } {
+    const NEUTRAL = 50;
+    const changed: string[] = [];
+    const delisted: string[] = [];
+    for (const m of this.members) {
+      if (m.delisted) continue;
+      if (m.reputation <= NEUTRAL) {
+        m.lastActiveAt = now; // keep the clock current so it can't snap-decay later
+        continue;
+      }
+      const idle = now - (m.lastActiveAt ?? now);
+      if (idle <= 0) continue;
+      const k = 1 - Math.pow(0.5, idle / halfLifeMs); // fraction of the gap to close
+      const next = Math.round(m.reputation - (m.reputation - NEUTRAL) * k);
+      if (next < m.reputation) {
+        const before = m.reputation;
+        m.reputation = next;
+        m.repDelta = next - before;
+        m.lastActiveAt = now; // reset only once a whole point actually moved
+        changed.push(m.id);
+        if (m.reputation < 50) {
+          m.delisted = true;
+          delisted.push(m.id);
+        }
+      }
+      // else: not enough idle time to move a full point yet — let it accumulate.
+    }
+    return { changed, delisted };
   }
 
   /**
@@ -192,6 +251,8 @@ export class CrewRegistry {
       (x) => !x.delisted && (x.id === identifier || x.name.toLowerCase() === key || x.skill === key),
     );
     if (!m) return undefined;
+    const before = m.reputation;
+    m.lastActiveAt = Date.now();
     if (vote === "like") {
       m.likes = (m.likes ?? 0) + 1;
       m.reputation = Math.round(m.reputation * 0.9 + 100 * 0.1);
@@ -199,10 +260,21 @@ export class CrewRegistry {
       m.dislikes = (m.dislikes ?? 0) + 1;
       m.reputation = Math.round(m.reputation * 0.9);
     }
+    m.repDelta = m.reputation - before;
     if (m.reputation < 50) m.delisted = true;
     return m;
   }
 }
+
+// Output budget per skill — code needs room for a whole file (400 tokens truncates
+// real code mid-function); image prompts want one line; prose sits in between.
+const MAX_TOKENS_BY_SKILL: Record<string, number> = {
+  coding: 1800,
+  research: 900,
+  copywriting: 900,
+  editing: 900,
+  "image-prompt": 160,
+};
 
 /** Run a crew member's skill — real Groq if configured, else a graceful offline deliverable. */
 export async function runCrewTask(member: CrewMember, task: string, context?: string): Promise<string> {
@@ -215,7 +287,7 @@ export async function runCrewTask(member: CrewMember, task: string, context?: st
       { role: "system", content: member.systemPrompt },
       { role: "user", content: userContent },
     ],
-    { maxTokens: 400 },
+    { maxTokens: MAX_TOKENS_BY_SKILL[member.skill] ?? 900 },
   );
   return withImage(member.skill, out || fallback, task);
 }

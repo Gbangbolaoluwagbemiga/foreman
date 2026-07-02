@@ -10,3 +10,9 @@ data/
 
 # local MCP config (machine path + wallet)
 .mcp.json
+
+# internal implementation plan — never pushed
+PLAN.md
+
+# publishable package's local install
+packages/*/node_modules/

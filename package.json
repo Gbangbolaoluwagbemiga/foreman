@@ -4,6 +4,11 @@
   "private": true,
   "type": "module",
   "description": "Give your AI a budget and a goal. It hires other AIs, pays each per task in USDC on Arc, and brings you the work plus a receipt.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Gbangbolaoluwagbemiga/foreman.git"
+  },
   "scripts": {
     "demo": "tsx src/demo.ts",
     "serve": "tsx src/server.ts",
@@ -15,9 +20,14 @@
     "subcontract": "tsx src/subcontract.ts",
     "serve:gateway": "ENGINE_RAIL=gateway tsx src/server.ts",
     "agent": "tsx src/external-agent.ts",
+    "circle:register": "tsx src/circleregister.ts",
+    "circle:setup": "tsx src/circlewallet.ts",
+    "circle:verify": "tsx src/circleverify.ts",
+    "circle:withdraw": "tsx src/circlewithdraw.ts",
     "mcp": "tsx src/mcp.ts"
   },
   "dependencies": {
+    "@circle-fin/developer-controlled-wallets": "^10.8.0",
     "@circle-fin/x402-batching": "^3.1.2",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@x402/evm": "^2.15.0",

@@ -1,12 +1,14 @@
-import type { GatewayClient } from "@circle-fin/x402-batching/client";
 import type { Hirer } from "../orchestrator";
+import type { ForemanGateway } from "./foremanMpc";
 
 /**
  * A real-money Hirer: the Foreman pays each crew member via Circle Gateway.
  * `gateway.pay()` runs the full x402 flow (402 → sign → retry → settle) and the
  * crew's seller endpoint returns the deliverable once payment settles on Arc.
+ * The gateway is either a raw-key `GatewayClient` or the MPC-backed treasury —
+ * both satisfy `ForemanGateway`, so paying crew is custody-agnostic here.
  */
-export function gatewayHire(gateway: GatewayClient, crewBaseUrl: string): Hirer {
+export function gatewayHire(gateway: ForemanGateway, crewBaseUrl: string): Hirer {
   return async (member, task, context) => {
     // External registered agents are paid at their own x402 endpoint (cross-boundary);
     // hosted agents are paid at our crew server. Either way, USDC settles to their wallet.

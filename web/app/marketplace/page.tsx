@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ARCSCAN, getCrew, type CrewMember } from "@/lib/engine";
+import { ARCSCAN, getCrew, usd, type CrewMember } from "@/lib/engine";
 import { RepBar } from "../components/ui";
 
 export default function MarketplacePage() {
@@ -31,7 +31,7 @@ export default function MarketplacePage() {
                   </span>
                 )}
               </h3>
-              <span className="font-mono text-accent">${m.priceUsdc.toFixed(2)}</span>
+              <span className="font-mono text-accent">${usd(m.priceUsdc)}</span>
             </div>
             <div className="mt-1 text-sm text-muted">{m.skill}</div>
             <div className="mt-4 flex items-center gap-2">
