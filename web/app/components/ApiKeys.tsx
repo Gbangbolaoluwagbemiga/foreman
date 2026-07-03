@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useAccount } from "wagmi";
-import { KeyRound, Copy, Check, Trash2, Plus } from "lucide-react";
+import { KeyRound, Copy, Check, Trash2, Plus, ChevronDown, ChevronRight, X } from "lucide-react";
 import { listApiKeys, createApiKey, revokeApiKey, clearSession, type ApiKeyMeta } from "@/lib/engine";
 import { useVerified } from "./useSession";
+
+const COLLAPSE_KEY = "foreman_apikeys_collapsed";
 
 /**
  * Agent API keys: mint a credential a headless agent (Claude Code via MCP, or the
@@ -20,14 +22,26 @@ export function ApiKeys() {
   const [copied, setCopied] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
 
-  useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    setMounted(true);
+    if (typeof window !== "undefined") setCollapsed(localStorage.getItem(COLLAPSE_KEY) === "1");
+  }, []);
   useEffect(() => {
     if (!address || !verified) return;
     listApiKeys(address).then(setKeys).catch(() => {});
   }, [address, verified]);
 
   if (!mounted || !isConnected) return null;
+
+  const toggleCollapse = () => {
+    setCollapsed((c) => {
+      const next = !c;
+      if (typeof window !== "undefined") localStorage.setItem(COLLAPSE_KEY, next ? "1" : "0");
+      return next;
+    });
+  };
 
   const mint = async () => {
     if (!address) return;
@@ -36,7 +50,8 @@ export function ApiKeys() {
     try {
       const { apiKey } = await createApiKey(address, "agent key");
       setFresh(apiKey);
-      setKeys(await listApiKeys(address));
+      // Refresh the list, but a hiccup here must NOT mask a successful mint.
+      listApiKeys(address).then(setKeys).catch(() => {});
     } catch (e) {
       const msg = (e as Error)?.message ?? "Could not mint key.";
       if (/verify wallet ownership/i.test(msg)) {
@@ -69,21 +84,33 @@ export function ApiKeys() {
   return (
     <div className="rounded-xl border border-edge bg-panel p-4">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="flex items-center gap-2 text-sm">
+        <button
+          onClick={toggleCollapse}
+          className="flex items-center gap-2 text-sm"
+          title={collapsed ? "Expand" : "Collapse"}
+        >
+          {collapsed ? <ChevronRight size={16} className="text-muted" /> : <ChevronDown size={16} className="text-muted" />}
           <KeyRound size={16} className="text-accent" />
           <span className="font-medium">Agent API keys</span>
+          {verified && keys.length > 0 && (
+            <span className="text-[11px] text-muted">· {keys.length}</span>
+          )}
           {!verified && <span className="text-[11px] text-amber-300/80">verify ownership to manage</span>}
-        </div>
-        <button
-          onClick={mint}
-          disabled={!verified || busy}
-          title={!verified ? "Verify wallet ownership first" : "Mint a key for a headless agent"}
-          className="ml-auto inline-flex items-center gap-1 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-[#04130c] disabled:opacity-50"
-        >
-          <Plus size={13} /> {busy ? "Minting…" : "Create agent key"}
         </button>
+        {!collapsed && (
+          <button
+            onClick={mint}
+            disabled={!verified || busy}
+            title={!verified ? "Verify wallet ownership first" : "Mint a key for a headless agent"}
+            className="ml-auto inline-flex items-center gap-1 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-[#04130c] disabled:opacity-50"
+          >
+            <Plus size={13} /> {busy ? "Minting…" : "Create agent key"}
+          </button>
+        )}
       </div>
 
+      {collapsed ? null : (
+        <>
       <p className="mt-2 text-xs text-muted">
         Give an AI (e.g. Claude Code via MCP) a key so it can hire and pay specialists <em>from this account</em> —
         capped by your kill switch, caps, and credit line. Revoke anytime.
@@ -96,13 +123,19 @@ export function ApiKeys() {
         <div className="mt-3 rounded-lg border border-accent/40 bg-accent/5 p-3">
           <div className="mb-1 flex items-center justify-between">
             <span className="text-[11px] font-medium uppercase tracking-wide text-accent">Copy now — shown once</span>
-            <button onClick={copy} className="inline-flex items-center gap-1 text-[11px] text-accent hover:underline">
-              {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? "copied" : "copy"}
-            </button>
+            <div className="flex items-center gap-3">
+              <button onClick={copy} className="inline-flex items-center gap-1 text-[11px] text-accent hover:underline">
+                {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? "copied" : "copy"}
+              </button>
+              <button onClick={() => setFresh(null)} title="Dismiss" className="text-muted hover:text-ink">
+                <X size={13} />
+              </button>
+            </div>
           </div>
           <code className="block break-all font-mono text-[11px] text-ink">{fresh}</code>
           <p className="mt-2 text-[11px] text-muted">
-            Use it in your MCP config: <code className="text-ink">FOREMAN_API_KEY={"{this key}"}</code>
+            Use it in your MCP config: <code className="text-ink">FOREMAN_API_KEY={"{this key}"}</code>.
+            It won’t be shown again — it’ll appear below as <code className="text-ink">fmn_…</code> once dismissed.
           </p>
         </div>
       )}
@@ -121,6 +154,8 @@ export function ApiKeys() {
             </li>
           ))}
         </ul>
+      )}
+        </>
       )}
     </div>
   );

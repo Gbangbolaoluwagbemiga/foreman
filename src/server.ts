@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { config } from "./config";
-import { CrewRegistry, usingRealBrain, auditionHostedAgent, type RegisterInput } from "./crew";
+import { CrewRegistry, usingRealBrain, auditionHostedAgent, isLive, type RegisterInput, type CrewMember } from "./crew";
 import { issueChallenge, verifyAndMint, ownsAccount, bearer, verifySession, issueApiKey, verifyApiKey } from "./auth";
 import { createLocalSigner } from "./signer";
 import { MockSettlement } from "./settlement";
@@ -90,6 +90,33 @@ function agentOwner(req: http.IncomingMessage): string | null {
     return null; // key was revoked or is invalid
   }
   return verifySession(tok);
+}
+
+/** The marketplace moderator, proven by a SIWE session matching ADMIN_ADDRESS. */
+function isAdmin(req: http.IncomingMessage): boolean {
+  if (!config.adminAddress) return false;
+  return verifySession(bearer(req)) === config.adminAddress;
+}
+
+/** Full admin view of an agent (includes pending/hidden ones + the AI verdict). */
+function adminAgentView(m: CrewMember) {
+  return {
+    id: m.id,
+    name: m.name,
+    skill: m.skill,
+    priceUsdc: m.priceUsdc,
+    walletAddress: m.walletAddress,
+    reputation: m.reputation,
+    jobs: m.jobsCompleted,
+    earnedUsdc: m.earnedUsdc,
+    registered: !!m.registered,
+    external: !!m.endpointUrl,
+    delisted: !!m.delisted,
+    status: m.status ?? "approved",
+    systemPrompt: m.systemPrompt,
+    audit: m.audit ?? null,
+    live: isLive(m),
+  };
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -210,7 +237,7 @@ function broadcast(event: unknown) {
 
 function crewSnapshot() {
   return registry.members
-    .filter((m) => !m.delisted)
+    .filter(isLive)
     .map((m) => ({
       name: m.name,
       skill: m.skill,
@@ -228,10 +255,13 @@ function crewSnapshot() {
     .sort((a, b) => b.reputation - a.reputation);
 }
 
+// Persisted registration record: the submission plus its moderation state.
+type StoredAgent = RegisterInput & { status?: "pending" | "approved"; audit?: CrewMember["audit"] };
+
 function loadRegistered() {
   try {
-    const list = JSON.parse(fs.readFileSync(DATA_FILE, "utf8")) as RegisterInput[];
-    for (const r of list) registry.register(r);
+    const list = JSON.parse(fs.readFileSync(DATA_FILE, "utf8")) as StoredAgent[];
+    for (const r of list) registry.register(r, { status: r.status ?? "approved", audit: r.audit });
     if (list.length) console.log(`  loaded ${list.length} registered agent(s)`);
   } catch {
     /* none yet */
@@ -333,9 +363,9 @@ function loadState() {
 }
 
 function saveRegistered() {
-  const list: RegisterInput[] = registry.members
+  const list: StoredAgent[] = registry.members
     .filter((m) => m.registered)
-    .map((m) => ({ name: m.name, skill: m.skill, priceUsdc: m.priceUsdc, walletAddress: m.walletAddress, systemPrompt: m.systemPrompt, endpointUrl: m.endpointUrl }));
+    .map((m) => ({ name: m.name, skill: m.skill, priceUsdc: m.priceUsdc, walletAddress: m.walletAddress, systemPrompt: m.systemPrompt, endpointUrl: m.endpointUrl, status: m.status ?? "approved", audit: m.audit }));
   try {
     fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
     fs.writeFileSync(DATA_FILE, JSON.stringify(list, null, 2));
@@ -606,20 +636,34 @@ const server = http.createServer((req, res) => {
             return json({ error: "an agent with an identical prompt already exists — make yours distinct" }, 409);
 
           let reputationSeed: number | undefined;
+          let status: "pending" | "approved" = "approved";
+          let auditMeta: CrewMember["audit"];
           if (endpointUrl) {
             if (!/^https?:\/\//.test(endpointUrl)) return json({ error: "endpoint must be a valid http(s) URL" }, 400);
             // Proof-of-realness: a genuine x402 agent answers 402 when unpaid.
             if (!(await probeX402(endpointUrl)))
               return json({ error: "endpoint did not return HTTP 402 — not a verifiable x402 paid agent" }, 400);
+            // A verified external endpoint still goes through admin review before listing.
+            status = "pending";
+            auditMeta = { score: 60, reason: "verified x402 endpoint (answered 402) — pending admin review", sample: "", at: Date.now() };
           } else {
             if (systemPrompt.length < 15) return json({ error: "hosted agents need a system prompt of at least 15 characters" }, 400);
-            // 5) Audition: run the agent on a sample task and judge the work.
+            // 5) AI audition: run the agent on a sample task and judge its genuineness.
             broadcast({ type: "log", msg: `🎧 Auditioning "${name}" (${skill})…`, ts: Date.now() });
             const audit = await auditionHostedAgent(skill, systemPrompt);
             if (!audit.pass)
               return json({ error: `audition failed — ${audit.reason}`, sample: audit.sample }, 422);
             reputationSeed = audit.score;
-            broadcast({ type: "log", msg: `✅ "${name}" passed audition (score ${audit.score}) — listed on probation`, ts: Date.now() });
+            auditMeta = { score: audit.score, reason: audit.reason, sample: audit.sample, at: Date.now() };
+            // AI triage: clearly-excellent agents skip the queue; the rest await an admin.
+            status = audit.score >= config.autoApproveScore ? "approved" : "pending";
+            broadcast({
+              type: "log",
+              msg: status === "approved"
+                ? `✅ "${name}" passed audition (score ${audit.score}) — auto-approved, now hireable`
+                : `🕐 "${name}" passed audition (score ${audit.score}) — queued for admin review`,
+              ts: Date.now(),
+            });
           }
 
           const m = registry.register(
@@ -631,12 +675,94 @@ const server = http.createServer((req, res) => {
               systemPrompt: systemPrompt || undefined,
               endpointUrl: endpointUrl || undefined,
             },
-            { reputationSeed },
+            { reputationSeed, status, audit: auditMeta },
           );
           saveRegistered();
+          if (isLive(m)) broadcast({ type: "crew", members: crewSnapshot() });
+          json(
+            { ok: true, status: m.status, agent: { id: m.id, name: m.name, skill: m.skill, priceUsdc: m.priceUsdc, walletAddress: m.walletAddress, reputation: m.reputation, auditScore: auditMeta?.score } },
+            201,
+          );
+        } catch {
+          json({ error: "bad json" }, 400);
+        }
+      })(),
+    );
+    return;
+  }
+  // ── Admin moderation (marketplace curation) ─────────────────────────────────
+  // Is the admin panel enabled, and is the caller the moderator?
+  if (req.method === "GET" && url.pathname === "/admin/status") {
+    json({ configured: !!config.adminAddress, admin: isAdmin(req) });
+    return;
+  }
+  // Full agent list for the moderator: pending queue + live + delisted, with the AI verdict.
+  if (req.method === "GET" && url.pathname === "/admin/agents") {
+    if (!isAdmin(req)) return json({ error: config.adminAddress ? "not authorized — admin only" : "admin panel not configured (set ADMIN_ADDRESS)" }, 403);
+    const agents = registry.members.map(adminAgentView).sort((a, b) => {
+      // Pending first (needs attention), then by reputation.
+      if ((a.status === "pending") !== (b.status === "pending")) return a.status === "pending" ? -1 : 1;
+      return b.reputation - a.reputation;
+    });
+    json({ agents, autoApproveScore: config.autoApproveScore });
+    return;
+  }
+  // Approve / reject / delete / delist / relist / re-audition a specific agent.
+  if (req.method === "POST" && url.pathname === "/admin/agent") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () =>
+      void (async () => {
+        try {
+          if (!isAdmin(req)) return json({ error: config.adminAddress ? "not authorized — admin only" : "admin panel not configured (set ADMIN_ADDRESS)" }, 403);
+          const { id, action } = JSON.parse(body || "{}");
+          const m = registry.byId(String(id ?? ""));
+          if (!m) return json({ error: "agent not found" }, 404);
+          const name = m.name;
+          switch (String(action)) {
+            case "approve": {
+              if (registry.members.some((x) => x.id !== m.id && x.skill === m.skill && isLive(x)))
+                return json({ error: `the "${m.skill}" skill is already served by a live agent — delist that one first` }, 409);
+              registry.setStatus(m.id, "approved");
+              broadcast({ type: "log", msg: `🟢 admin approved ${name} (${m.skill}) — now hireable`, ts: Date.now() });
+              break;
+            }
+            case "reject":
+            case "delete": {
+              if (!registry.remove(m.id)) return json({ error: "only registered agents can be removed (seeded crew can be delisted)" }, 400);
+              broadcast({ type: "log", msg: `🗑️ admin removed ${name} (${m.skill})`, ts: Date.now() });
+              break;
+            }
+            case "delist": {
+              m.delisted = true;
+              broadcast({ type: "log", msg: `⬇️ admin delisted ${name} — "${m.skill}" is open again`, ts: Date.now() });
+              break;
+            }
+            case "relist": {
+              m.delisted = false;
+              if (m.registered) m.status = "approved";
+              broadcast({ type: "log", msg: `⬆️ admin relisted ${name} (${m.skill})`, ts: Date.now() });
+              break;
+            }
+            case "reaudition": {
+              if (m.endpointUrl || !m.systemPrompt) return json({ error: "re-audition only applies to hosted (prompt) agents" }, 400);
+              broadcast({ type: "log", msg: `🎧 re-auditioning ${name} (${m.skill})…`, ts: Date.now() });
+              const audit = await auditionHostedAgent(m.skill, m.systemPrompt);
+              m.audit = { score: audit.score, reason: audit.reason, sample: audit.sample, at: Date.now() };
+              if (!audit.pass) { m.status = "pending"; m.delisted = false; }
+              broadcast({ type: "log", msg: `${audit.pass ? "✅" : "❌"} re-audition of ${name}: score ${audit.score} — ${audit.reason}`, ts: Date.now() });
+              break;
+            }
+            default:
+              return json({ error: `unknown action "${action}"` }, 400);
+          }
+          saveRegistered();
           broadcast({ type: "crew", members: crewSnapshot() });
-          broadcast({ type: "log", msg: `🆕 ${m.name} registered as a ${m.skill} agent ($${m.priceUsdc}, rep ${m.reputation}) — now hireable`, ts: Date.now() });
-          json({ ok: true, agent: { id: m.id, name: m.name, skill: m.skill, priceUsdc: m.priceUsdc, walletAddress: m.walletAddress, reputation: m.reputation } }, 201);
+          const agents = registry.members.map(adminAgentView).sort((a, b) => {
+            if ((a.status === "pending") !== (b.status === "pending")) return a.status === "pending" ? -1 : 1;
+            return b.reputation - a.reputation;
+          });
+          json({ ok: true, agents });
         } catch {
           json({ error: "bad json" }, 400);
         }

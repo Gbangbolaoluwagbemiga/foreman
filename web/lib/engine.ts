@@ -125,6 +125,16 @@ export interface RegisterInput {
   endpointUrl?: string;
 }
 
+/** Thrown when an agent fails the audition — carries the sample so the UI can show it. */
+export class AuditionError extends Error {
+  sample?: string;
+  constructor(message: string, sample?: string) {
+    super(message);
+    this.name = "AuditionError";
+    this.sample = sample;
+  }
+}
+
 export async function registerAgent(input: RegisterInput) {
   const r = await fetch(`${ENGINE}/register`, {
     method: "POST",
@@ -132,8 +142,59 @@ export async function registerAgent(input: RegisterInput) {
     body: JSON.stringify(input),
   });
   const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.error ?? `register failed (${r.status})`);
-  return body.agent as { id: string; name: string; skill: string; priceUsdc: number; walletAddress: string };
+  if (!r.ok) {
+    // 422 = failed the audition; the body carries a sample of what the agent produced.
+    if (r.status === 422) throw new AuditionError(body.error ?? "audition failed", body.sample);
+    throw new Error(body.error ?? `register failed (${r.status})`);
+  }
+  return {
+    ...(body.agent as { id: string; name: string; skill: string; priceUsdc: number; walletAddress: string; auditScore?: number }),
+    status: body.status as "pending" | "approved",
+  };
+}
+
+// ── Admin moderation: curate the marketplace (approve/reject/delete pending agents).
+export interface AdminAgent {
+  id: string;
+  name: string;
+  skill: string;
+  priceUsdc: number;
+  walletAddress: string;
+  reputation: number;
+  jobs: number;
+  earnedUsdc: number;
+  registered: boolean;
+  external: boolean;
+  delisted: boolean;
+  status: "pending" | "approved";
+  systemPrompt?: string;
+  audit: { score: number; reason: string; sample: string; at: number } | null;
+  live: boolean;
+}
+export type AdminAction = "approve" | "reject" | "delete" | "delist" | "relist" | "reaudition";
+
+export async function getAdminStatus(): Promise<{ configured: boolean; admin: boolean }> {
+  const r = await fetch(`${ENGINE}/admin/status`, { cache: "no-store", headers: { ...authHeader() } });
+  if (!r.ok) return { configured: false, admin: false };
+  return r.json();
+}
+
+export async function getAdminAgents(): Promise<{ agents: AdminAgent[]; autoApproveScore: number }> {
+  const r = await fetch(`${ENGINE}/admin/agents`, { cache: "no-store", headers: { ...authHeader() } });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error ?? `could not load agents (${r.status})`);
+  return { agents: body.agents ?? [], autoApproveScore: body.autoApproveScore ?? 82 };
+}
+
+export async function adminAgentAction(id: string, action: AdminAction): Promise<AdminAgent[]> {
+  const r = await fetch(`${ENGINE}/admin/agent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeader() },
+    body: JSON.stringify({ id, action }),
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error ?? `action failed (${r.status})`);
+  return body.agents ?? [];
 }
 export interface LedgerItem {
   ts: number;
@@ -226,8 +287,16 @@ export interface ApiKeyMeta {
   createdAt: number;
   label?: string;
 }
-export const listApiKeys = (user: string) =>
-  get<{ keys: ApiKeyMeta[] }>(`/account/apikeys?user=${user}`).then((d) => d.keys ?? []);
+export async function listApiKeys(user: string): Promise<ApiKeyMeta[]> {
+  // The list is owner-only, so this must carry the SIWE session — plain get() doesn't.
+  const r = await fetch(`${ENGINE}/account/apikeys?user=${user}`, {
+    cache: "no-store",
+    headers: { ...authHeader() },
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error ?? `could not list keys (${r.status})`);
+  return body.keys ?? [];
+}
 
 /** Mint a key. The full secret is returned exactly once — copy it immediately. */
 export async function createApiKey(user: string, label?: string): Promise<{ apiKey: string; keyId: string }> {

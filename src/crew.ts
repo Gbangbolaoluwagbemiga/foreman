@@ -28,6 +28,18 @@ export interface CrewMember {
   delisted?: boolean; // reputation fell below the bar — hidden from hiring + marketplace
   likes?: number;
   dislikes?: number;
+  // Moderation lifecycle for registered agents (seeded crew are implicitly approved):
+  //   pending  → passed the AI audition but awaits an admin's decision (hidden from hire)
+  //   approved → live and hireable
+  status?: "pending" | "approved";
+  // The AI audition's verdict — shown to the admin in the review queue.
+  audit?: { score: number; reason: string; sample: string; at: number };
+}
+
+/** A member is publicly live (hireable + shown in the marketplace) only if it is
+ *  approved (or a seeded agent with no explicit status) AND not delisted. */
+export function isLive(m: CrewMember): boolean {
+  return !m.delisted && (m.status ?? "approved") === "approved";
 }
 
 /** Intrinsic reliability per seeded agent — reputation converges here over time. */
@@ -135,7 +147,10 @@ export class CrewRegistry {
   }
 
   /** Add an externally-registered agent. Returns the created member. */
-  register(input: RegisterInput, opts: { reputationSeed?: number } = {}): CrewMember {
+  register(
+    input: RegisterInput,
+    opts: { reputationSeed?: number; status?: "pending" | "approved"; audit?: CrewMember["audit"] } = {},
+  ): CrewMember {
     // New agents enter UNPROVEN — below the established crew (rep 63–85) — and
     // must earn their rank through delivery. A strong audition lifts the start a
     // little; it never lets a newcomer leapfrog a proven specialist.
@@ -157,20 +172,39 @@ export class CrewRegistry {
       systemPrompt: input.systemPrompt ?? `You are a helpful ${input.skill} specialist. Be concise and concrete.`,
       endpointUrl: input.endpointUrl?.trim() || undefined,
       registered: true,
+      status: opts.status ?? "approved",
+      audit: opts.audit,
     };
     this.members.push(m);
     return m;
   }
 
+  /** Set a registered agent's moderation status (admin action). */
+  setStatus(id: string, status: "pending" | "approved"): CrewMember | undefined {
+    const m = this.byId(id);
+    if (!m || !m.registered) return undefined;
+    m.status = status;
+    if (status === "approved") m.delisted = false; // an approval un-hides it
+    return m;
+  }
+
+  /** Permanently remove a registered agent (admin delete). Seeded crew can't be removed. */
+  remove(id: string): CrewMember | undefined {
+    const i = this.members.findIndex((m) => m.id === id && m.registered);
+    if (i < 0) return undefined;
+    return this.members.splice(i, 1)[0];
+  }
+
   skills(): string[] {
-    return [...new Set(this.members.filter((m) => !m.delisted).map((m) => m.skill))];
+    return [...new Set(this.members.filter(isLive).map((m) => m.skill))];
   }
   forSkill(skill: string): CrewMember[] {
-    return this.members.filter((m) => m.skill === skill && !m.delisted);
+    return this.members.filter((m) => m.skill === skill && isLive(m));
   }
-  /** Is a skill already served by a live agent? (Used to enforce skill uniqueness.) */
+  /** Is a skill already served by a live agent? (Used to enforce skill uniqueness.)
+   *  Pending agents don't reserve a skill — only an approved, live one does. */
   hasSkill(skill: string): boolean {
-    return this.members.some((m) => m.skill === skill.trim().toLowerCase() && !m.delisted);
+    return this.members.some((m) => m.skill === skill.trim().toLowerCase() && isLive(m));
   }
   byId(id: string): CrewMember | undefined {
     return this.members.find((m) => m.id === id || m.name.toLowerCase() === id.toLowerCase());
@@ -305,51 +339,102 @@ export interface Audition {
   reason: string;
   sample: string;
 }
-export async function auditionHostedAgent(skill: string, systemPrompt: string): Promise<Audition> {
-  const probe = `Sample assignment to verify your specialty. Topic: "a new neighbourhood coffee shop launching next month". Produce your best, concise ${skill} output for this — do the task, don't describe it.`;
-  const output = await groqComplete(
-    [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: probe },
-    ],
-    { maxTokens: 300 },
-  );
+const clamp100 = (n: unknown) => Math.max(0, Math.min(100, Math.round(Number(n))));
 
-  // Planner offline (no Groq key / rate-limited): don't block — admit on probation.
-  if (!output) return { pass: true, score: 45, reason: "audition skipped (planner offline) — admitted on probation", sample: "" };
+/**
+ * Is this "system prompt" actually a placeholder / test / casual chatter rather
+ * than a genuine specialist instruction? Runs with no network, so it catches the
+ * obvious junk even when the planner (Groq) is offline.
+ */
+function looksLikePlaceholder(p: string): boolean {
+  const s = p.toLowerCase().replace(/\s+/g, " ").trim();
+  const unique = new Set(s.split(/\s+/).filter((w) => /[a-z]/.test(w))).size;
+  // Meta statements about testing the app, not instructions to an agent.
+  if (/\b(just )?(testing|a test|trying (this|it|it all|things|stuff|out)|to see if|see if (it|this)|does (this|it) work|will (it|this) work|is this working|placeholder|asdf+|qwerty+|lorem ipsum|hello world|foo ?bar|whatever|idk|dunno|no idea|dummy|blah)\b/.test(s))
+    return true;
+  // First-person chatter ("i am trying…", "i want to…") that describes the USER
+  // instead of instructing the agent — and is too short to be a real spec.
+  if (/^i(?:'m| am| will| just| was| want| wanna| like| have| think| gonna)\b/.test(s) && !/\byou (are|will|should|must|need)\b/.test(s) && unique < 14)
+    return true;
+  // Too few distinct words to be a real instruction.
+  return unique < 6;
+}
+
+export async function auditionHostedAgent(skill: string, systemPrompt: string): Promise<Audition> {
+  // 0) Deterministic gate — reject obvious placeholders even with no Groq key.
+  if (looksLikePlaceholder(systemPrompt))
+    return {
+      pass: false,
+      score: 0,
+      reason: "the system prompt reads like a test or placeholder, not a genuine specialist instruction — describe what your agent does, its style, and its constraints",
+      sample: "",
+    };
+
+  const probe = `Sample assignment to verify your specialty. Topic: "a new neighbourhood coffee shop launching next month". Produce your best, concise ${skill} output for this — do the task, don't describe it.`;
+
+  // 1) Differential run: the candidate WITH its prompt, and a BLANK baseline (same
+  //    base model, generic persona) in parallel. If the candidate can't beat a
+  //    blank model, the "agent" is just the base model wearing a label — not a
+  //    real specialist. This is the genuineness check.
+  const [output, baseline] = await Promise.all([
+    groqComplete([{ role: "system", content: systemPrompt }, { role: "user", content: probe }], { maxTokens: 300 }),
+    groqComplete([{ role: "system", content: "You are a generic helpful assistant." }, { role: "user", content: probe }], { maxTokens: 300 }),
+  ]);
+
+  // Planner offline (no Groq key / rate-limited): don't block real users — admit low, on probation.
+  if (!output) return { pass: true, score: 42, reason: "audition skipped (planner offline) — admitted on probation", sample: "" };
 
   const sample = output.slice(0, 400);
   const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
   // Heuristic rejections — the obvious rubbish.
   if (norm(output).length < 25) return { pass: false, score: 0, reason: "output too short to be useful", sample };
-  if (norm(output).includes(norm(systemPrompt).slice(0, 40)) && norm(systemPrompt).length > 40)
+  if (norm(systemPrompt).length > 40 && norm(output).includes(norm(systemPrompt).slice(0, 40)))
     return { pass: false, score: 0, reason: "agent echoed its instructions instead of doing the task", sample };
-  if (/\b(i cannot|i can't|as an ai|i'm unable|i am unable)\b/i.test(output))
+  if (/\b(i cannot|i can'?t|as an ai|i'?m unable|i am unable)\b/i.test(output))
     return { pass: false, score: 0, reason: "agent refused the sample task", sample };
 
-  // Best-effort LLM judge — strict auditor scores the work.
+  // 2) Strict auditor — judges the PROMPT's genuineness, the OUTPUT's competence,
+  //    and whether the prompt adds real signal over the blank-model baseline.
   const verdict = await groqComplete(
     [
-      { role: "system", content: 'You are a strict quality auditor for an AI agent marketplace. Score 0-100 whether the OUTPUT is a competent, specific, non-generic response that actually performs the stated SKILL (not a refusal, not echoing instructions). Return JSON {"score": <number>, "reason": "<short>"}.' },
-      { role: "user", content: `SKILL: ${skill}\nTASK: ${probe}\n\nOUTPUT:\n${output}` },
+      {
+        role: "system",
+        content:
+          'You are a strict admissions auditor for an AI-agent marketplace. You get a candidate agent\'s SYSTEM PROMPT, the OUTPUT it produced on a sample task, and a BASELINE the same base model produced with no special prompt. Judge honestly. Return ONLY JSON: {"promptGenuine": <bool>, "promptScore": <0-100>, "outputScore": <0-100>, "addsValue": <bool>, "reason": "<short>"}.\n' +
+          '- promptGenuine=false and promptScore<40 if the SYSTEM PROMPT is a placeholder, a test, casual chatter, empty, or does NOT define a competent specialist for the stated SKILL.\n' +
+          '- outputScore: is the OUTPUT specific, competent, on-skill work (not generic filler, not a refusal, not echoing instructions)?\n' +
+          '- addsValue=true ONLY if the OUTPUT is clearly better or more specialised than the BASELINE (i.e., the prompt actually shapes the work). If it is no better than the baseline, addsValue=false.',
+      },
+      { role: "user", content: `SKILL: ${skill}\n\nSYSTEM PROMPT:\n${systemPrompt}\n\nOUTPUT:\n${output}\n\nBASELINE (no special prompt):\n${baseline || "(unavailable)"}` },
     ],
-    { json: true, maxTokens: 120, temperature: 0 },
+    { json: true, maxTokens: 160, temperature: 0 },
   );
-  let score = 55;
-  let reason = "passed heuristic checks";
+
+  let promptScore = 55, outputScore = 55, promptGenuine = true, addsValue = true, reason = "passed heuristic checks";
   if (verdict) {
     try {
       const j = JSON.parse(verdict);
-      if (Number.isFinite(Number(j.score))) {
-        score = Math.max(0, Math.min(100, Math.round(Number(j.score))));
-        reason = String(j.reason ?? reason).slice(0, 120);
-      }
+      if (Number.isFinite(Number(j.promptScore))) promptScore = clamp100(j.promptScore);
+      if (Number.isFinite(Number(j.outputScore))) outputScore = clamp100(j.outputScore);
+      if (typeof j.promptGenuine === "boolean") promptGenuine = j.promptGenuine;
+      if (typeof j.addsValue === "boolean") addsValue = j.addsValue;
+      reason = String(j.reason ?? reason).slice(0, 140);
     } catch {
-      /* keep heuristic default */
+      /* keep heuristic defaults */
     }
   }
-  // Admission bar: a competent agent clears 50.
-  if (score < 50) return { pass: false, score, reason: `quality below the bar: ${reason}`, sample };
+
+  // Hard gates — each is a distinct, honest reason to reject.
+  if (!promptGenuine || promptScore < 45)
+    return { pass: false, score: promptScore, reason: `the system prompt isn't a genuine ${skill} specialist — ${reason}`, sample };
+  if (outputScore < 50)
+    return { pass: false, score: outputScore, reason: `the sample ${skill} work wasn't competent enough — ${reason}`, sample };
+  if (!addsValue && promptScore < 62)
+    return { pass: false, score: Math.min(promptScore, outputScore), reason: `your prompt didn't beat a blank model on the sample — it isn't a distinct specialist yet`, sample };
+
+  // Blend: prompt genuineness + delivered quality, with a bonus when the prompt
+  // demonstrably beats the baseline. Newcomers are still rep-capped in register().
+  const score = Math.min(100, Math.round(0.5 * promptScore + 0.4 * outputScore + (addsValue ? 10 : 0)));
   return { pass: true, score, reason, sample };
 }
 
