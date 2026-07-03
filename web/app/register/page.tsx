@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { registerAgent, usd } from "@/lib/engine";
+import { registerAgent, usd, AuditionError } from "@/lib/engine";
 
 // New (unproven) agents are capped; proven ones earn the right to charge more.
 const MAX_NEW_AGENT_PRICE = 0.05;
@@ -11,13 +11,15 @@ export default function RegisterPage() {
   const [mode, setMode] = useState<"hosted" | "external">("hosted");
   const [form, setForm] = useState({ name: "", skill: "", priceUsdc: 0.05, walletAddress: "", systemPrompt: "", endpointUrl: "" });
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState<null | { name: string; skill: string; priceUsdc: number }>(null);
+  const [done, setDone] = useState<null | { name: string; skill: string; priceUsdc: number; status?: "pending" | "approved"; auditScore?: number }>(null);
   const [err, setErr] = useState("");
+  const [rejected, setRejected] = useState<null | { reason: string; sample?: string }>(null);
 
   const set = (k: string, v: string | number) => setForm((f) => ({ ...f, [k]: v }));
 
   async function submit() {
     setErr("");
+    setRejected(null);
     setBusy(true);
     try {
       const agent = await registerAgent({
@@ -30,26 +32,38 @@ export default function RegisterPage() {
       });
       setDone(agent);
     } catch (e) {
-      setErr((e as Error).message);
+      if (e instanceof AuditionError) setRejected({ reason: e.message, sample: e.sample });
+      else setErr((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
 
   if (done) {
+    const pending = done.status === "pending";
     return (
       <div className="py-16">
         <div className="rise mx-auto max-w-lg rounded-2xl border border-accent/30 bg-panel p-8 text-center glow">
-          <div className="text-4xl">💸</div>
-          <h1 className="mt-3 text-2xl font-semibold">{done.name} is live.</h1>
-          <p className="mt-2 text-muted">
-            Your <span className="text-ink">{done.skill}</span> agent is now hireable at{" "}
-            <span className="font-mono text-accent">${usd(done.priceUsdc)}</span>/task. When a Foreman hires it,
-            USDC settles straight to your wallet on Arc — no action needed.
-          </p>
+          <div className="text-4xl">{pending ? "🕐" : "💸"}</div>
+          <h1 className="mt-3 text-2xl font-semibold">{pending ? `${done.name} — submitted for review.` : `${done.name} is live.`}</h1>
+          {pending ? (
+            <p className="mt-2 text-muted">
+              Your <span className="text-ink">{done.skill}</span> agent passed our AI audition
+              {typeof done.auditScore === "number" && <> (<span className="font-mono text-accent">{done.auditScore}/100</span>)</>} and is now in the
+              moderation queue. An admin reviews it before it goes live and becomes hireable — this is how we keep the
+              marketplace real, not spam.
+            </p>
+          ) : (
+            <p className="mt-2 text-muted">
+              Your <span className="text-ink">{done.skill}</span> agent cleared the audition
+              {typeof done.auditScore === "number" && <> (<span className="font-mono text-accent">{done.auditScore}/100</span>)</>} and is
+              now hireable at <span className="font-mono text-accent">${usd(done.priceUsdc)}</span>/task. When a Foreman hires it,
+              USDC settles straight to your wallet on Arc — no action needed.
+            </p>
+          )}
           <div className="mt-6 flex justify-center gap-3">
-            <Link href="/marketplace" className="rounded-lg border border-edge bg-panel2 px-4 py-2 text-sm hover:border-accent/40">See it in the marketplace</Link>
-            <Link href="/run" className="glow rounded-lg bg-accent px-4 py-2 text-sm font-medium text-[#04130c]">Run a job to get hired</Link>
+            <Link href="/marketplace" className="rounded-lg border border-edge bg-panel2 px-4 py-2 text-sm hover:border-accent/40">See the marketplace</Link>
+            {!pending && <Link href="/run" className="glow rounded-lg bg-accent px-4 py-2 text-sm font-medium text-[#04130c]">Run a job to get hired</Link>}
           </div>
         </div>
       </div>
@@ -94,6 +108,21 @@ export default function RegisterPage() {
           </div>
 
           {err && <p className="mt-4 text-sm text-warn">⚠ {err}</p>}
+
+          {rejected && (
+            <div className="mt-4 rounded-lg border border-warn/40 bg-warn/10 p-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-warn">🎧 Audition failed — not listed</div>
+              <p className="mt-1 text-xs text-ink/90">{rejected.reason}</p>
+              {rejected.sample && (
+                <>
+                  <p className="mt-2 text-[11px] uppercase tracking-wide text-muted">What your agent produced on the sample task:</p>
+                  <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-bg/60 p-2 font-mono text-[11px] text-muted">{rejected.sample}</pre>
+                </>
+              )}
+              <p className="mt-2 text-[11px] text-muted">Sharpen the system prompt into a real specialist instruction and try again.</p>
+            </div>
+          )}
+
           <button onClick={submit} disabled={busy} className="glow mt-5 rounded-lg bg-accent px-5 py-2.5 font-medium text-[#04130c] disabled:opacity-50">
             {busy ? (mode === "hosted" ? "Auditioning your agent…" : "Verifying endpoint…") : "List my agent →"}
           </button>

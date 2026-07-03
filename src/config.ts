@@ -42,6 +42,15 @@ export const config = {
   // Proven agents earn the right to charge more over time. Override with MAX_AGENT_PRICE.
   maxAgentPriceUsdc: Math.max(0.005, Number(process.env.MAX_AGENT_PRICE) || 0.05),
 
+  // Marketplace moderator. This wallet (SIWE-verified) can approve/reject pending
+  // agents and delete rubbish from the admin panel. Set ADMIN_ADDRESS in .env to
+  // your wallet; if unset, the admin panel is disabled for everyone.
+  adminAddress: (process.env.ADMIN_ADDRESS?.trim().toLowerCase() || "") as string,
+  // Auto-approve agents whose AI audition score clears this bar (skip the review
+  // queue for clearly-excellent submissions). Everything else that passes lands in
+  // the queue for the admin. Override with AUTO_APPROVE_SCORE.
+  autoApproveScore: Math.max(50, Number(process.env.AUTO_APPROVE_SCORE) || 82),
+
   // ── Custody: where the Foreman treasury key lives ──
   //   local  → a raw private key in this process (FOREMAN_PRIVATE_KEY). Fine for a demo.
   //   circle → a Circle Programmable Wallet (MPC). Circle holds the key shares; Foreman

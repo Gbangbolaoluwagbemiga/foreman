@@ -20,6 +20,8 @@
     "subcontract": "tsx src/subcontract.ts",
     "serve:gateway": "ENGINE_RAIL=gateway tsx src/server.ts",
     "agent": "tsx src/external-agent.ts",
+    "agent:claude": "AGENT_PROVIDER=anthropic AGENT_NAME=Claude AGENT_SKILL=translation AGENT_PRICE=0.03 AGENT_PORT=8500 tsx src/external-agent.ts",
+    "agent:gemini": "AGENT_PROVIDER=gemini AGENT_NAME=Gemini AGENT_SKILL=localization AGENT_PRICE=0.03 AGENT_PORT=8501 tsx src/external-agent.ts",
     "circle:register": "tsx src/circleregister.ts",
     "circle:setup": "tsx src/circlewallet.ts",
     "circle:verify": "tsx src/circleverify.ts",

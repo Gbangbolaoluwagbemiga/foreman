@@ -15,7 +15,14 @@ import { groqComplete } from "./crew";
  * build, across process boundaries, and USDC settles to that agent's own wallet.
  * It's also the "this is all it takes to plug in and earn" template for other builders.
  *
+ * The agent's BRAIN is pluggable — point it at any model provider. Foreman never sees
+ * the provider key; the lister holds it and earns USDC. This is how a real Claude or
+ * Gemini agent plugs into Foreman and gets hired + paid on Arc.
+ *
  *   AGENT_NAME, AGENT_SKILL, AGENT_PRICE, AGENT_PORT, AGENT_SYSTEM_PROMPT
+ *   AGENT_PROVIDER     — groq (default) | anthropic | gemini
+ *   AGENT_MODEL        — override the provider's default model id
+ *   ANTHROPIC_API_KEY / GEMINI_API_KEY — the lister's own key (never sent to Foreman)
  *   AGENT_PRIVATE_KEY  — this agent's wallet (earnings settle here). Auto-generated if unset.
  *   FOREMAN_URL        — engine to register with (default http://localhost:8799)
  */
@@ -27,6 +34,54 @@ const FOREMAN = process.env.FOREMAN_URL || "http://localhost:8799";
 const SYSTEM =
   process.env.AGENT_SYSTEM_PROMPT ||
   "You are Lingo, a professional translator. Translate the user's text into fluent French; reply with only the translation.";
+const PROVIDER = (process.env.AGENT_PROVIDER || "groq").toLowerCase() as "groq" | "anthropic" | "gemini";
+
+// ── The agent's brain: pluggable across providers, all via plain fetch (no SDKs). ──
+const DEFAULT_MODEL: Record<string, string> = {
+  groq: process.env.GROQ_MODEL?.trim() || "llama-3.3-70b-versatile",
+  anthropic: "claude-haiku-4-5-20251001",
+  gemini: "gemini-1.5-flash",
+};
+const MODEL = process.env.AGENT_MODEL?.trim() || DEFAULT_MODEL[PROVIDER];
+
+async function think(system: string, task: string): Promise<string | null> {
+  try {
+    if (PROVIDER === "anthropic") {
+      const key = process.env.ANTHROPIC_API_KEY?.trim();
+      if (!key) return "[config] ANTHROPIC_API_KEY not set";
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({ model: MODEL, max_tokens: 600, system, messages: [{ role: "user", content: task }] }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      const j = (await r.json()) as { error?: { message?: string }; content?: { text?: string }[] };
+      if (!r.ok) return `[anthropic ${r.status}] ${j?.error?.message ?? "error"}`;
+      return j?.content?.map((c) => c.text ?? "").join("").trim() || null;
+    }
+    if (PROVIDER === "gemini") {
+      const key = process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim();
+      if (!key) return "[config] GEMINI_API_KEY not set";
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${key}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: system }] },
+          contents: [{ role: "user", parts: [{ text: task }] }],
+          generationConfig: { maxOutputTokens: 600 },
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      const j = (await r.json()) as { error?: { message?: string }; candidates?: { content?: { parts?: { text?: string }[] } }[] };
+      if (!r.ok) return `[gemini ${r.status}] ${j?.error?.message ?? "error"}`;
+      return j?.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("").trim() || null;
+    }
+    // default: Groq (the house model)
+    return await groqComplete([{ role: "system", content: system }, { role: "user", content: task }], { maxTokens: 600 });
+  } catch (e) {
+    return `[${PROVIDER} error] ${((e as Error).message || "").slice(0, 80)}`;
+  }
+}
 
 const ARC_TESTNET_NETWORK = "eip155:5042002";
 const FACILITATOR_TESTNET = "https://gateway-api-testnet.circle.com";
@@ -79,14 +134,10 @@ const server = http.createServer((req, res) => {
     if (!proceed) return;
 
     const body = preq.body as { task?: string; context?: string };
-    const out =
-      (await groqComplete(
-        [
-          { role: "system", content: SYSTEM },
-          { role: "user", content: body?.task ?? "" },
-        ],
-        { maxTokens: 400 },
-      )) ?? `[${NAME}] delivered (offline)`;
+    const prompt = body?.context
+      ? `${body.task ?? ""}\n\n--- Work already delivered by earlier crew (use as input) ---\n${body.context}`
+      : body?.task ?? "";
+    const out = (await think(SYSTEM, prompt)) ?? `[${NAME}] delivered (offline)`;
     if (!res.writableEnded) {
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify({ deliverable: out }));
@@ -97,6 +148,7 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, async () => {
   const endpoint = `http://localhost:${PORT}/agent`;
   console.log(`\n  🌐 External agent "${NAME}" (${SKILL}, $${PRICE}/task) live → ${endpoint}`);
+  console.log(`     brain: ${PROVIDER} · ${MODEL}`);
   console.log(`     earnings settle to its OWN wallet: ${account.address}`);
   try {
     const r = await fetch(`${FOREMAN}/register`, {
