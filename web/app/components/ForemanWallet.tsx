@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { erc20Abi, formatUnits, parseUnits } from "viem";
 import { useAccount, useChainId, useReadContract, useSwitchChain, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { useAppKit } from "@reown/appkit/react";
-import { Wallet, Plus, ArrowDownToLine } from "lucide-react";
-import { ARCSCAN, getForeman, getAccount, reportDeposit, withdrawForeman, type ForemanInfo, type Account } from "@/lib/engine";
+import { Wallet, Plus, ArrowDownToLine, ShieldCheck } from "lucide-react";
+import { ARCSCAN, getForeman, getAccount, reportDeposit, withdrawForeman, getCreditAttestation, verifyCreditAttestation, type ForemanInfo, type Account } from "@/lib/engine";
 import { USDC, arcTestnet } from "@/lib/wagmi";
 import { VerifyOwnership } from "./VerifyOwnership";
 import { useVerified } from "./useSession";
@@ -21,6 +21,7 @@ export function ForemanWallet() {
   const [mounted, setMounted] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
   const [note, setNote] = useState("");
+  const [att, setAtt] = useState<{ state: "idle" | "checking" | "ok" | "fail"; attester?: string }>({ state: "idle" });
   const fundedAmt = useRef(0);
   const reportedTx = useRef<string | null>(null);
 
@@ -72,6 +73,20 @@ export function ForemanWallet() {
   const score = account?.creditScore ?? 0;
   const band = account?.creditBand ?? "no history";
   const scoreColor = score >= 80 ? "text-accent" : score >= 65 ? "text-accent/80" : score >= 45 ? "text-ink" : "text-muted";
+
+  // Fetch a signed attestation of this score and verify its EIP-712 signature
+  // right here in the browser — proof the score is real without trusting the API.
+  const verifyScore = async () => {
+    if (!address) return;
+    setAtt({ state: "checking" });
+    try {
+      const a = await getCreditAttestation(address);
+      const ok = await verifyCreditAttestation(a);
+      setAtt({ state: ok ? "ok" : "fail", attester: a.attester });
+    } catch {
+      setAtt({ state: "fail" });
+    }
+  };
 
   const fund = async () => {
     setNote("");
@@ -141,6 +156,24 @@ export function ForemanWallet() {
                 <span className="text-muted">—</span>
               )}
             </div>
+            {connected && account && (
+              <div className="mt-0.5 leading-tight">
+                <button
+                  onClick={verifyScore}
+                  disabled={att.state === "checking"}
+                  title="Fetch an EIP-712-signed attestation of this score and verify the signature in your browser — no trust in our server."
+                  className={`inline-flex items-center gap-1 text-[10px] hover:underline ${att.state === "ok" ? "text-accent" : att.state === "fail" ? "text-warn" : "text-muted hover:text-accent"}`}
+                >
+                  <ShieldCheck size={11} />
+                  {att.state === "checking" ? "verifying…" : att.state === "ok" ? "signature verified" : att.state === "fail" ? "verify failed — retry" : "verify score"}
+                </button>
+                {att.state === "ok" && att.attester && (
+                  <a href={`${ARCSCAN}/address/${att.attester}`} target="_blank" rel="noreferrer" className="ml-1.5 text-[10px] text-accent/70 hover:underline">
+                    attester {att.attester.slice(0, 6)}…{att.attester.slice(-4)} ↗
+                  </a>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

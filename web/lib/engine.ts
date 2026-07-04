@@ -279,6 +279,41 @@ export interface TransferProof {
 export const isTransferId = (ref: string) => /^[0-9a-f-]{36}$/i.test(ref);
 export const verifyTransfer = (id: string) => get<TransferProof>(`/transfer?id=${id}`);
 
+// ── Portable credit attestation: an EIP-712-signed statement of a wallet's score
+// that anyone can verify offline against the published attester address — the score
+// as an independently-verifiable primitive, not a "trust our server" lookup.
+export interface CreditAttestation {
+  attester: `0x${string}`;
+  signature: `0x${string}`;
+  attestation: { subject: string; score: number; creditLimit: number; band: string; issuedAt: number; expiry: number };
+  eip712: {
+    domain: { name: string; version: string; chainId: number };
+    types: Record<string, { name: string; type: string }[]>;
+    primaryType: string;
+    message: Record<string, string>;
+  };
+}
+export const getCreditAttestation = (user: string) => get<CreditAttestation>(`/credit/attestation?user=${user}`);
+
+/** Verify an attestation's EIP-712 signature in the browser — zero trust in the engine. */
+export async function verifyCreditAttestation(a: CreditAttestation): Promise<boolean> {
+  try {
+    const { verifyTypedData } = await import("viem");
+    // Cast the whole options object: viem's generic infers field types from `types`,
+    // which we only know at runtime — the signature check itself is fully dynamic.
+    return await verifyTypedData({
+      address: a.attester,
+      domain: a.eip712.domain,
+      types: a.eip712.types,
+      primaryType: a.eip712.primaryType,
+      message: a.eip712.message,
+      signature: a.signature,
+    } as Parameters<typeof verifyTypedData>[0]);
+  } catch {
+    return false;
+  }
+}
+
 // ── Agent API keys: credentials the owner mints so a headless agent (MCP / API)
 // can spend from this account, inside its caps + credit. Managing keys requires
 // the SIWE session (authHeader).
