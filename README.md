@@ -3,16 +3,30 @@
 **The spending account, credit line, and control plane for AI agents — MCP-native, on Arc.**
 
 Give your AI a budget and a goal. It hires a crew of other AIs, pays each one per task in
-**real USDC on Arc**, and brings you the finished work plus an itemized receipt. When it has
-no cash, it works on an **earned credit line**. You hold the controls; the treasury is a
-**Circle MPC wallet** — no raw private key ever touches a payment.
+**real USDC on [Arc](https://www.arc.network/)**, and brings you the finished work plus an
+itemized receipt. When it has no cash, it works on an **earned credit line**. You hold the
+controls; the treasury is a **Circle MPC wallet** — no raw private key ever touches a payment.
 
-Built for the **Lepton Agents Hackathon** (Canteen × Circle on Arc) — targeting
-**RFB 03: Agent-to-Agent Nanopayment Networks**.
+<p align="center">
+  <a href="https://foreman-lime-kappa.vercel.app"><img alt="Live app" src="https://img.shields.io/badge/live-app-3fb950?style=for-the-badge"></a>
+  <a href="https://www.npmjs.com/package/foreman-mcp"><img alt="npm" src="https://img.shields.io/npm/v/foreman-mcp?style=for-the-badge&label=foreman-mcp&color=cb3837"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge"></a>
+</p>
+
+## 🔗 Live
+
+| | |
+|---|---|
+| 🖥️ **Web app** | **https://foreman-lime-kappa.vercel.app** |
+| ⚙️ **Engine API** | **https://lepton-foreman.up.railway.app** ([`/stats`](https://lepton-foreman.up.railway.app/stats) · [`/crew`](https://lepton-foreman.up.railway.app/crew)) |
+| 📦 **MCP server** | **[`foreman-mcp`](https://www.npmjs.com/package/foreman-mcp)** on npm → `npx -y foreman-mcp` |
+| ⛓️ **Network** | Arc Testnet · treasury `0x357e4b16…0566da4af` ([explorer](https://testnet.arcscan.app/address/0x357e4b165f8a9b74cbcede1225617dd0566da4af)) |
+
+> Runs live on the **Circle Gateway rail** under **Circle MPC custody** — real sub-cent USDC settles on Arc, and every receipt carries a verifiable **Circle transfer UUID**.
 
 ---
 
-## The idea in one picture
+## What is Foreman?
 
 Think of a **general contractor**. You hand them one job and a budget; they hire the
 electrician, the carpenter, the painter, pay each for their piece, and hand you the finished
@@ -25,51 +39,96 @@ too heavy, so *reputation is the escrow*.
 
 But a contractor who only has cash-in-hand is a day-laborer. A contractor with a **business
 account, a credit line, and a boss who can freeze the cards** is a company. That second layer
-— **credit + custody + control + a standard plug (MCP)** — is what makes Foreman defensible.
+— **credit + custody + control + a standard plug (MCP)** — is what makes Foreman a product,
+not a demo.
+
+### Who it's for
+- **AI builders** who want their agent to *pay for tools, data, and other agents* autonomously — with a budget, caps, and a kill switch they control. Plug in over MCP in one line.
+- **Specialist-agent operators** who want to *earn* — list an agent (a prompt, a fine-tune, or your own paid API), get hired per task, paid in USDC on Arc, and build on-chain reputation.
+- **Teams on Arc / Circle** who need a reference implementation of agent-to-agent nanopayments with real custody (MPC) and settlement (Gateway x402).
 
 ---
 
-## What's built (the differentiator layer)
+## Quickstart
+
+### 1) Use the hosted app
+Open **[foreman-lime-kappa.vercel.app](https://foreman-lime-kappa.vercel.app)**, connect a wallet,
+fund the account, and give the Foreman a goal. Watch it hire and pay a crew live.
+
+### 2) Give your own AI a company card (MCP)
+Add Foreman to any MCP client (Claude Code, Cursor, Codex) — no install needed:
+
+```jsonc
+// e.g. Claude Code / Cursor MCP config
+{
+  "mcpServers": {
+    "foreman": {
+      "command": "npx",
+      "args": ["-y", "foreman-mcp"],
+      "env": { "FOREMAN_URL": "https://lepton-foreman.up.railway.app" }
+    }
+  }
+}
+```
+
+Your agent gets three tools — `foreman_account`, `foreman_discover`, `foreman_delegate` —
+and can hire + pay specialists *from your account*, inside the caps and credit line you set.
+Mint a scoped, revocable API key in the web app to let a headless agent spend. See **[MCP.md](MCP.md)**.
+
+### 3) Run the engine yourself
+```bash
+git clone https://github.com/Gbangbolaoluwagbemiga/foreman.git
+cd foreman
+npm install
+cp .env.example .env        # add GROQ_API_KEY for the real brain (optional)
+
+npm run demo                # one-shot job in the terminal (offline, free)
+npm run serve               # live engine at http://localhost:8799 (mock rail)
+```
+The web app lives in [`web/`](web/) (`cd web && npm install && npm run dev`); point it at the
+engine with `NEXT_PUBLIC_ENGINE_URL`.
+
+---
+
+## Features
 
 Everything below is **real and verifiable** — no mock data, no faked animations.
 
 ### 💳 Circle MPC custody — no raw key signs anything
-The Foreman treasury is a **Circle Programmable Wallet (developer-controlled, MPC)** on Arc.
-Circle holds the key shares; Foreman never sees a private key. **Every** money movement is
-authorized through Circle MPC:
-- **Pay crew** — signs the x402 / EIP-3009 payment authorization under MPC.
-- **Deposit** into the Gateway — MPC-signed on-chain tx.
-- **Withdraw** — MPC-signed burn intent + Circle attestation + MPC-signed mint back.
+The treasury is a **Circle Programmable Wallet (developer-controlled, MPC)** on Arc. Circle
+holds the key shares; Foreman never sees a private key. **Every** money movement is authorized
+through MPC — **pay crew** (x402 / EIP-3009 authorization), **deposit** into the Gateway, and
+**withdraw** (MPC-signed burn intent → Circle attestation → MPC-signed mint). Flip on with
+`WALLET_CUSTODY=circle`; a local keypair stays the default fallback.
 
-Flip it on with `WALLET_CUSTODY=circle`; prove it with `npm run circle:verify` and
-`npm run circle:withdraw -- 0.5`. Local raw-key mode stays the default so the demo can't break.
-
-### 🧾 Earned credit score + credit line — the first AI agent with a credit score
+### 🧾 Earned credit score + credit line
 An agent with **$0 cash can still work**, on a credit line it earned. The score is computed
-from repayment history, utilization, tenure, and volume (methodology in
-[CREDIT.md](CREDIT.md)), and it sets the credit limit and rate. Repay, and the score climbs
-on screen.
+from repayment history, utilization, tenure, and volume (methodology in **[CREDIT.md](CREDIT.md)**),
+and it sets the limit and rate. Repay, and the score climbs on screen.
 
 ### 🛑 Spend control plane — you're the boss
-Per-agent **spending caps** and a **kill switch**. When a job would breach a cap or the switch
-is on, it's **DECLINED** — a red banner on screen and a distinct feed entry. Control you can
-*see*.
+Per-agent **spending caps** and a **kill switch**. A job that would breach a cap or hit the
+switch is **DECLINED** — a visible red banner and a distinct feed entry. Control you can *see*.
 
-### 🔑 Wallet identity (SIWE) — a provably-owned account
-Sign-In-With-Ethereum gates the account actions (funding, controls, standing orders): the
-credit score belongs to a wallet that **cryptographically proved it owns the account**, not to
-an anonymous session.
+### 🔑 Wallet identity (SIWE)
+Sign-In-With-Ethereum (EIP-4361) gates account actions (funding, controls, standing orders,
+key minting) — the credit score belongs to a wallet that **cryptographically proved it owns
+the account**, not to an anonymous session.
 
-### ⏱️ Standing orders — recurring autonomous work
+### ⏱️ Standing orders
 Schedule a goal to run every N minutes on a budget. The Foreman keeps working while you sleep,
-within the caps you set.
+within the caps you set — each run passes the same spend gate.
 
-### 🔌 MCP-native + agent API keys — plug in any agent, keep the leash
-Foreman ships an **MCP server** (`foreman-mcp`). Drop it into Claude Code (or any MCP client)
-and your AI gets `foreman_account`, `foreman_discover`, and `foreman_delegate` tools — "your
-AI just got a company card." A headless agent spends only with an **API key you mint** (after
-proving wallet ownership) — scoped to that account, inside its caps + credit line, and
-**revocable anytime**. See [MCP.md](MCP.md).
+### 🔌 MCP-native + agent API keys
+Ships an **MCP server** (`foreman-mcp`) so any MCP client's AI gets a company card. Headless
+agents spend only with an **owner-minted, revocable API key**, scoped to one account and inside
+its caps + credit line.
+
+### 🛒 Curated open marketplace
+Anyone can list a specialist — a **hosted** agent (just a prompt, run on Groq for you) or an
+**external x402 endpoint** (bring your own model / API key, e.g. a real Claude or Gemini agent).
+New agents are **AI-auditioned** and pass through a **moderator queue**; skills are unique and
+reputation decays, so the marketplace stays real, not spam.
 
 ### 💸 Real USDC on Arc via Circle Gateway x402 batching
 Crew are live **x402 sellers**; the Foreman pays per call, settling sub-cent USDC on Arc
@@ -78,91 +137,104 @@ receipt.
 
 ---
 
-## Why it fits the hackathon
-- **Nano-native:** payments are per-task, sub-cent, USDC-settled on Arc.
-- **Agent-to-agent (RFB 03):** a Foreman hires multiple crew; multi-hop work + payment
-  splitting; an Agency agent that is itself a Foreman (emergent broker).
-- **Circle tooling, full lifecycle:** Gateway x402 batching **and** Programmable Wallets (MPC)
-  for pay, deposit, and withdraw.
-- **Reputation as trust:** who-delivered is remembered and compounds in real time.
-- **Adoption wedge:** a crew member is just a wallet + a prompt, so the marketplace is cheap to
-  seed — any external x402 service (including other teams' submissions) can become crew.
+## Architecture
 
-## Architecture (swappable seams)
-| Seam | Status | Implementation |
-|------|--------|----------------|
-| Custody | ✅ **done** | **Circle Programmable Wallet (MPC)** — `WALLET_CUSTODY=circle`; local keypair as fallback |
-| Settlement | ✅ **done** | **Circle Gateway x402 batching** on Arc (`mock` rail available for offline demos) |
-| Identity | ✅ **done** | **SIWE** (EIP-4361) session, HMAC-gated account actions |
-| Interface | ✅ **done** | **MCP server** (`foreman-mcp`) + browser dashboard + SSE stream |
-| Brain | ✅ live | Groq `llama-3.3-70b-versatile` (deterministic mock fallback) |
-| Reputation | ✅ live | in-memory, persisted per node | 
+Rail-agnostic by design — nothing in the agent logic changes when you flip a seam.
 
-Nothing in the agent logic changes when we flip a seam — that's the whole design.
+| Seam | Implementation |
+|------|----------------|
+| **Custody** | Circle Programmable Wallet (MPC) — `WALLET_CUSTODY=circle`; local keypair fallback |
+| **Settlement** | Circle Gateway x402 batching on Arc (`mock` rail for offline demos) |
+| **Identity** | SIWE (EIP-4361) session, HMAC-gated account actions |
+| **Interface** | MCP server (`foreman-mcp`) + Next.js dashboard + SSE stream |
+| **Brain** | Groq `llama-3.3-70b-versatile` (deterministic mock fallback) |
+| **Reputation** | in-memory, persisted per node; decay + slashing |
 
 ### Key files
-- `src/config.ts` — Arc chain + env + custody flags
-- `src/gateway/circleSigner.ts` — **Circle MPC signer** (EIP-1193 → viem `BatchEvmSigner`)
-- `src/gateway/foremanMpc.ts` — **MPC treasury**: pay (x402) / deposit / withdraw, all under MPC
-- `src/gateway/foreman.ts` / `hirer.ts` — raw-key gateway + rail-agnostic hire→pay loop
-- `src/auth.ts` — SIWE nonce / verify / session
-- `src/crew.ts` — crew marketplace + reputation + seeded specialists
-- `src/brain.ts` — Foreman planning (decompose goal → subtasks) + crew selection
-- `src/orchestrator.ts` — the autonomous hire → pay → assemble loop + receipt
-- `src/server.ts` — **live node**: dashboard, SSE stream, credit, controls, standing orders
-- `src/mcp.ts` — MCP server exposing account / discover / delegate
+- [`src/config.ts`](src/config.ts) — Arc chain + env + custody flags
+- [`src/gateway/circleSigner.ts`](src/gateway/circleSigner.ts) — Circle MPC signer (EIP-1193 → viem `BatchEvmSigner`)
+- [`src/gateway/foremanMpc.ts`](src/gateway/foremanMpc.ts) — MPC treasury: pay (x402) / deposit / withdraw, all under MPC
+- [`src/gateway/foreman.ts`](src/gateway/foreman.ts) · [`hirer.ts`](src/gateway/hirer.ts) — raw-key gateway + rail-agnostic hire→pay loop
+- [`src/auth.ts`](src/auth.ts) — SIWE nonce / verify / session + API keys
+- [`src/crew.ts`](src/crew.ts) — marketplace, reputation, AI audition, seeded specialists
+- [`src/brain.ts`](src/brain.ts) — planning (decompose goal → subtasks) + crew selection
+- [`src/orchestrator.ts`](src/orchestrator.ts) — the autonomous hire → pay → assemble loop + receipt
+- [`src/server.ts`](src/server.ts) — the engine: API, SSE stream, credit, controls, standing orders, admin
+- [`src/mcp.ts`](src/mcp.ts) — MCP server exposing account / discover / delegate
+- [`src/external-agent.ts`](src/external-agent.ts) — template for a third-party x402 agent (bring your own model)
 
-## Run it
-
-```bash
-cd Foreman
-npm install
-cp .env.example .env        # add GROQ_API_KEY for the real brain (optional)
-
-npm run demo                # one-shot job in the terminal (offline, free)
-npm run serve               # live node at http://localhost:8799 (mock rail)
+### Repo layout
 ```
-
-**Real money on Arc (Circle Gateway):**
-```bash
-ENGINE_RAIL=gateway npm run serve:gateway    # settles real USDC on Arc
+foreman/
+├─ src/            engine (TypeScript, run directly via tsx)
+│  ├─ gateway/     Circle Gateway + MPC custody
+│  └─ x402/        x402 payment protocol types
+├─ web/            Next.js 15 dashboard (wagmi + Reown AppKit)
+├─ packages/mcp/   the published foreman-mcp server
+├─ Dockerfile      engine container (Railway)
+└─ railway.toml    engine deploy config
 ```
-
-**Under Circle MPC custody** (set `WALLET_CUSTODY=circle` in `.env` first — see
-[CIRCLE_SETUP.md](CIRCLE_SETUP.md)):
-```bash
-npm run circle:register     # one-time: register your entity secret
-npm run circle:setup        # create the MPC treasury wallet on Arc
-npm run circle:verify       # prove MPC signs payments (no funds needed)
-npm run circle:withdraw -- 0.5   # prove the MPC withdrawal round-trip
-```
-Then `ENGINE_RAIL=gateway npm run serve:gateway` shows
-`🔐 treasury custody: Circle MPC` — every payment signed by MPC, no raw key.
-
-Runs fully **offline and free** by default (mock brain + mock settlement). Add a Groq key for
-real reasoning; fund the treasury and use the gateway rail for real USDC on Arc.
 
 ---
 
-## 📍 Milestone log
+## Deployment
 
-- **2026-06-15 — Project chosen & scaffolded.** Picked RFB 03; "Foreman" framing locked. Fresh TypeScript project (viem + groq-sdk), `AgentSigner` / `Settlement` seams in place.
+- **Engine → Railway.** Docker build from [`Dockerfile`](Dockerfile); health check on `/stats`.
+  Set the secrets in the service Variables (`GROQ_API_KEY`, `FOREMAN_PRIVATE_KEY` **or** the
+  `CIRCLE_*` MPC creds, `RPC`, `SETTLEMENT_RAIL=arc-usdc`) and mount a volume at `/app/data` so
+  credit scores + reputation persist. Full guide in **[DEPLOY.md](DEPLOY.md)**.
+- **Web → Vercel.** Root `web/`; set `NEXT_PUBLIC_ENGINE_URL` to the engine URL and redeploy.
+- **MCP → npm.** `foreman-mcp` is published — `npx -y foreman-mcp` (no build step).
+
+Circle MPC setup (entity secret, treasury wallet, verification) is documented in
+**[CIRCLE_SETUP.md](CIRCLE_SETUP.md)**.
+
+---
+
+## Documentation
+- **[MCP.md](MCP.md)** — connect any AI agent over MCP; tools + API keys.
+- **[CREDIT.md](CREDIT.md)** — the agent credit-score methodology.
+- **[CIRCLE_SETUP.md](CIRCLE_SETUP.md)** — Circle Programmable Wallet (MPC) setup.
+- **[DEPLOY.md](DEPLOY.md)** — self-hosting the engine + web app.
+- **[DEMO.md](DEMO.md)** — the guided demo script.
+
+---
+
+## Origin
+
+Built for the **[Lepton Agents Hackathon](https://www.arc.network/)** (Canteen × Circle on Arc),
+targeting **RFB 03: Agent-to-Agent Nanopayment Networks** — then hardened into a deployed,
+publicly usable product. Development log:
+
+<details>
+<summary><b>Milestone log</b></summary>
+
+- **2026-06-15 — Project chosen & scaffolded.** RFB 03 picked; "Foreman" framing locked. TypeScript project (viem + groq-sdk), `AgentSigner` / `Settlement` seams in place.
 - **2026-06-15 — First autonomous job end-to-end (mock).** Foreman plans → hires 4 crew → pays each → assembles deliverable → returns itemized receipt with change.
 - **2026-06-15 — Real Groq brain online.** Crew produce real work; reputation persists and compounds across jobs.
-- **2026-06-15 — Live node shipped.** `npm run serve` → browser dashboard with real-time SSE stream of decisions, payments, and the crew/reputation table.
-- **2026-06-15 — Crew collaborate.** Deliverables chain as context: the proofreader edits the copywriter's actual lines. A real multi-agent pipeline, not isolated workers.
-- **2026-06-16 — Real x402 payments.** Crew are x402 sellers; the Foreman pays per call by signing an **EIP-3009 USDC authorization**, verified by the seller before work is released. `npm run x402`.
-- **2026-06-16 — Circle Gateway settlement wired.** Crew run as live x402 sellers behind **Circle Gateway**; the Foreman pays via `GatewayClient`, settling real sub-cent USDC on Arc through **Gateway batching**. `npm run gateway`.
-- **2026-06-16 — First real on-chain payment.** Foreman paid Quill **0.3 USDC, settled on Arc via Gateway batching** — fully autonomous, no human in the loop.
-- **2026-06-16 — Whole flow on real money.** Rail-agnostic `Hirer`; the full multi-crew job runs on real Circle Gateway. `npm run gateway:job`.
-- **2026-06-16 — Always-on swarm.** A Foreman continuously takes jobs and pays a crew, accumulating real agent-to-agent USDC volume + a compounding reputation economy. `SWARM_RAIL=gateway npm run swarm`.
-- **2026-06-16 — Recursive subcontracting + resilience.** An Agency agent that is *itself a Foreman*: takes a fee, hires sub-crew, keeps a margin — a depth-2 payment chain and an emergent broker. `npm run subcontract`.
-- **2026-07-02 — Credit line + control plane.** An agent with **$0 cash works on its earned credit** (methodology in [CREDIT.md](CREDIT.md)); per-agent **spending caps + kill switch** produce a visible **DECLINED** moment. Standing orders run recurring jobs autonomously.
-- **2026-07-02 — Wallet identity (SIWE).** Sign-In-With-Ethereum gates account actions — the credit score belongs to a **provably-owned** wallet.
-- **2026-07-02 — MCP-native + agent API keys.** Publishable `foreman-mcp` exposes `foreman_account` / `foreman_discover` / `foreman_delegate` to any MCP client (e.g. Claude Code). Headless agents authenticate with an **owner-minted, revocable API key** scoped to one account — spending from an account now *requires* proof (key or SIWE session). Mint/revoke keys in the web app.
-- **2026-07-02 — Circle MPC custody, full lifecycle, proven live.** Treasury moved to a **Circle Programmable Wallet (MPC)** on Arc. **Pay, deposit, and withdraw all run under MPC** — no raw key. Validated on-chain: MPC-signed Gateway deposit + a crew payment (real Circle transfer UUID) + a `circle:withdraw` round-trip. Gated behind `WALLET_CUSTODY=circle`; local rail stays default.
+- **2026-06-15 — Live node shipped.** Browser dashboard with real-time SSE stream of decisions, payments, and the crew/reputation table.
+- **2026-06-15 — Crew collaborate.** Deliverables chain as context: the proofreader edits the copywriter's actual lines — a real multi-agent pipeline.
+- **2026-06-16 — Real x402 payments.** Crew are x402 sellers; the Foreman pays per call by signing an EIP-3009 USDC authorization, verified before work is released.
+- **2026-06-16 — Circle Gateway settlement wired.** Crew run as live x402 sellers behind Circle Gateway; real sub-cent USDC settles on Arc via Gateway batching.
+- **2026-06-16 — First real on-chain payment.** Foreman paid a crew member 0.3 USDC, settled on Arc — fully autonomous, no human in the loop.
+- **2026-06-16 — Whole flow on real money.** Rail-agnostic `Hirer`; the full multi-crew job runs on real Circle Gateway.
+- **2026-06-16 — Always-on swarm + recursive subcontracting.** A continuously-running Foreman accumulates real agent-to-agent USDC volume; an Agency agent that is *itself a Foreman* creates a depth-2 payment chain.
+- **2026-07-02 — Credit line + control plane.** $0-cash agents work on earned credit; per-agent caps + kill switch produce a visible DECLINED moment. Standing orders run recurring jobs.
+- **2026-07-02 — Wallet identity (SIWE).** Account actions gated by proof of wallet ownership.
+- **2026-07-02 — MCP-native + agent API keys.** `foreman-mcp` exposes account / discover / delegate; headless agents authenticate with owner-minted, revocable keys.
+- **2026-07-02 — Circle MPC custody, full lifecycle.** Treasury moved to a Circle Programmable Wallet (MPC): pay, deposit, and withdraw all run under MPC — no raw key.
+- **2026-07-03 — Curated marketplace + moderation.** AI audition + admin review queue; external x402 agents (bring your own model) can register and get hired.
+- **2026-07-04 — Deployed & published.** Engine live on Railway, web app on Vercel, `foreman-mcp` published to npm — running on the Circle Gateway rail under MPC custody.
 
-### Next up
-- Deploy so judges can try it live (Railway engine + Vercel web + `npx -y foreman-mcp`).
-- On-chain reputation; staking/slashing; self-serve crew listing.
-- LangChain / CrewAI adapters; cross-wallet sybil resistance on the credit score.
+</details>
+
+### Roadmap
+- On-chain reputation; staking / slashing for crew.
+- LangChain / CrewAI adapters.
+- Cross-wallet sybil resistance on the credit score.
+- Mainnet USDC.
+
+---
+
+## License
+[MIT](LICENSE) © oluwagbemiga
