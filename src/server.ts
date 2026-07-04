@@ -8,6 +8,13 @@ import { issueChallenge, verifyAndMint, ownsAccount, bearer, verifySession, issu
 import { createLocalSigner } from "./signer";
 import { MockSettlement } from "./settlement";
 import { runJob, type Hirer, type Receipt } from "./orchestrator";
+import {
+  createAttester,
+  buildAttestation,
+  attestationDomain,
+  ATTESTATION_TYPES,
+  ATTESTATION_PRIMARY_TYPE,
+} from "./attestation";
 
 const DATA_FILE = path.join(process.cwd(), "data", "registered.json");
 const STATE_FILE = path.join(process.cwd(), "data", "state.json");
@@ -31,6 +38,9 @@ const clients = new Set<http.ServerResponse>();
 const log: unknown[] = [];
 const stats = { jobs: 0, payments: 0, volumeUsdc: 0, startedAt: Date.now(), rail: RAIL };
 const ledger: Array<{ ts: number; crew: string; skill: string; amountUsdc: number; ref: string; recipient?: string }> = [];
+
+// EIP-712 signer for portable, independently-verifiable credit attestations.
+const attester = createAttester(config.attesterPrivateKey || undefined, process.env.AUTH_SECRET);
 
 // ── Per-user accounts: each connected wallet has its own deposits/spend, plus a
 // credit line whose size is set by a live CREDIT SCORE (repayment history + usage
@@ -541,6 +551,62 @@ const server = http.createServer((req, res) => {
         });
       } catch (e) {
         json({ error: (e as Error).message }, 502);
+      }
+    })();
+    return;
+  }
+  // ── Portable credit attestations (EIP-712) ──────────────────────────────────
+  // The attester identity + schema, so anyone can verify a signature offline.
+  if (req.method === "GET" && url.pathname === "/credit/attester") {
+    json({
+      attester: attester.address,
+      stable: attester.stable,
+      domain: attestationDomain(),
+      types: ATTESTATION_TYPES,
+      primaryType: ATTESTATION_PRIMARY_TYPE,
+      note: "EIP-712 signer of Foreman credit attestations. Verify signatures against this address.",
+    });
+    return;
+  }
+  // A wallet's current credit score as a signed, independently-verifiable EIP-712
+  // attestation. Read-only and unauthenticated — a score is not a secret, and the
+  // signature is what makes it trustworthy without querying this server.
+  if (req.method === "GET" && url.pathname === "/credit/attestation") {
+    const user = url.searchParams.get("user") ?? "";
+    if (!/^0x[0-9a-fA-F]{40}$/.test(user)) return json({ error: "valid user address required" }, 400);
+    const v = accountView(user);
+    void (async () => {
+      try {
+        const message = buildAttestation(user as `0x${string}`, v.creditScore, v.creditLimit, v.creditBand);
+        const signature = await attester.sign(message);
+        json({
+          attester: attester.address,
+          signature,
+          attestation: {
+            subject: message.subject,
+            score: Number(message.score),
+            creditLimit: Number(message.creditLimit) / 1e6,
+            band: message.band,
+            issuedAt: Number(message.issuedAt),
+            expiry: Number(message.expiry),
+          },
+          // The exact EIP-712 payload to feed a verifier (uint256 as strings).
+          eip712: {
+            domain: attestationDomain(),
+            types: ATTESTATION_TYPES,
+            primaryType: ATTESTATION_PRIMARY_TYPE,
+            message: {
+              subject: message.subject,
+              score: message.score.toString(),
+              creditLimit: message.creditLimit.toString(),
+              band: message.band,
+              issuedAt: message.issuedAt.toString(),
+              expiry: message.expiry.toString(),
+            },
+          },
+        });
+      } catch (e) {
+        json({ error: (e as Error).message }, 500);
       }
     })();
     return;
@@ -1084,7 +1150,8 @@ async function start() {
     const custody = config.walletCustody === "circle" ? "circle-MPC" : "local-key";
     console.log(`\n  🟢 Foreman engine API → http://localhost:${PORT}   rail: ${RAIL} · custody: ${custody}`);
     console.log(`     crew: ${registry.members.length} · credit: score-based 10–50% · standing orders: on · persist: on · auth: SIWE`);
-    console.log(`     GET /stats /crew /activity /history /account /orders /events   POST /run /delegate /orders /account/* /auth/*\n`);
+    console.log(`     credit attestations: EIP-712 signer ${attester.address} (${attester.source})`);
+    console.log(`     GET /stats /crew /activity /history /account /orders /events /credit/attestation   POST /run /delegate /orders /account/* /auth/*\n`);
   });
 
   if (RAIL === "gateway") {

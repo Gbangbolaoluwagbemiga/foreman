@@ -144,5 +144,47 @@ reproducible — is the core of the demo and the reason the number means somethi
    observed repayment/default rates once there's a real distribution.
 3. **Custody** — issue the line against custodied balances (e.g. Circle Programmable
    Wallets) so credit is collateral-aware, not just behaviour-aware.
-4. **Portable score** — expose the score via MCP/HTTP so *other* protocols can underwrite
-   the same agent — the beginning of a shared credit bureau for autonomous agents.
+4. **Portable score** — ✅ **shipped (v1, below):** the score is exposed as an EIP-712
+   *signed attestation* any other protocol can verify offline — the beginning of a shared
+   credit bureau for autonomous agents. Next: on-chain consumption + multi-issuer bureaus.
+
+---
+
+## Portable, verifiable attestations (shipped)
+
+A credit score you have to *ask our server for* isn't a credit primitive — it's a lookup.
+Foreman signs each score as an **EIP-712 attestation** so any third party can verify it
+**offline**, against a known attester address, without trusting (or even reaching) the engine.
+
+```
+GET /credit/attester                 → the attester address + EIP-712 domain/types
+GET /credit/attestation?user=0x…     → { attestation, signature, eip712 }
+```
+
+The signature covers `{ subject, score, creditLimit, band, issuedAt, expiry }` under the
+domain `{ name: "Foreman Credit", version: "1", chainId }`. The attester is a **dedicated
+signer, deliberately separate from the treasury** that pays crew — vouching for a score and
+moving money are different authorities. Set `ATTESTER_PRIVATE_KEY` for an explicit signer; by
+default a stable key is derived from `AUTH_SECRET`.
+
+**Verify one yourself** (needs nothing but the fetched payload):
+
+```ts
+import { verifyTypedData } from "viem";
+
+const r = await fetch("https://lepton-foreman.up.railway.app/credit/attestation?user=0x…").then(r => r.json());
+const ok = await verifyTypedData({
+  address: r.attester,          // the published Foreman attester
+  domain: r.eip712.domain,
+  types: r.eip712.types,
+  primaryType: r.eip712.primaryType,
+  message: r.eip712.message,    // uint256 fields are strings
+  signature: r.signature,
+});
+// ok === true  → this score genuinely came from Foreman's attester, untampered.
+```
+
+This is what turns "we built a credit score" into a **portable credit primitive**: another
+lending protocol, a different agent marketplace, or an on-chain verifier can underwrite the
+same agent off a Foreman attestation — the smallest real step toward a shared credit bureau
+for autonomous agents.

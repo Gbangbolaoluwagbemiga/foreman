@@ -62,6 +62,12 @@ export const config = {
   circleWalletAddress: (process.env.CIRCLE_WALLET_ADDRESS?.trim() || "") as `0x${string}` | "",
   // Circle Blockchain code for the treasury wallet (the SDK enum includes ARC-TESTNET).
   circleBlockchain: process.env.CIRCLE_BLOCKCHAIN?.trim() || "ARC-TESTNET",
+
+  // ── Credit-score attestations ──
+  // Dedicated EIP-712 signer for portable, independently-verifiable credit
+  // attestations. Optional: if unset, a stable key is derived from AUTH_SECRET
+  // (or an ephemeral one per boot). Kept separate from the treasury key on purpose.
+  attesterPrivateKey: (process.env.ATTESTER_PRIVATE_KEY?.trim() || "") as `0x${string}` | "",
 };
 
 /** USDC on Arc Testnet has 6 decimals. */
