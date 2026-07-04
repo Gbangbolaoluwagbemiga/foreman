@@ -1,6 +1,16 @@
+import { createRequire } from "node:module";
 import { createWalletClient, custom, type WalletClient } from "viem";
-import { createEIP1193Provider } from "@circle-fin/developer-controlled-wallets/evm";
 import { config, arcTestnet } from "../config";
+
+// The Circle DCW `/evm` subpath ships dual CJS/ESM builds, and its ESM named
+// exports aren't reliably resolvable across Node versions — a static
+// `import { createEIP1193Provider }` works on Node 25 but throws on Node 22 with
+// "does not provide an export named 'createEIP1193Provider'". Load the CJS build
+// explicitly via createRequire so the export is found deterministically.
+const nodeRequire = createRequire(import.meta.url);
+const { createEIP1193Provider } = nodeRequire(
+  "@circle-fin/developer-controlled-wallets/evm",
+) as typeof import("@circle-fin/developer-controlled-wallets/evm");
 
 /**
  * Custody via Circle Programmable Wallets (developer-controlled, MPC).
