@@ -1065,43 +1065,8 @@ async function start() {
   };
   process.on("SIGINT", flush);
   process.on("SIGTERM", flush);
-  if (RAIL === "gateway") {
-    const { startCrewServer } = await import("./gateway/crewServer");
-    const { createForemanGateway } = await import("./gateway/foreman");
-    const { createForemanGatewayMPC } = await import("./gateway/foremanMpc");
-    const { circleCustodyReady } = await import("./gateway/circleSigner");
-    const { gatewayHire } = await import("./gateway/hirer");
-    const { generatePrivateKey } = await import("viem/accounts");
 
-    const CREW_PORT = PORT + 1;
-    await startCrewServer(registry, CREW_PORT);
-    // Custody switch: Circle MPC treasury (no raw key) when configured, else the
-    // local raw-key wallet. Both satisfy ForemanGateway, so the rail is identical.
-    const useMpc = config.walletCustody === "circle" && circleCustodyReady();
-    const gateway = useMpc
-      ? createForemanGatewayMPC()
-      : createForemanGateway((config.foremanPrivateKey || generatePrivateKey()) as `0x${string}`);
-    if (useMpc) console.log("  🔐 treasury custody: Circle MPC (no raw key signs payments)");
-    foremanAddress = gateway.address as `0x${string}`;
-    gatewayClient = gateway;
-    hireFn = gatewayHire(gateway, `http://localhost:${CREW_PORT}`);
-
-    // Keep enough Gateway balance for a job before each run.
-    beforeRun = async () => {
-      const need = 1_000_000n; // $1.00 headroom
-      let available = (await gateway.getBalances()).gateway.available;
-      if (available >= need) return;
-      broadcast({ type: "log", msg: "💰 topping up Gateway balance…", ts: Date.now() });
-      await gateway.deposit("2");
-      const startedAt = Date.now();
-      while (available < need && Date.now() - startedAt < 90_000) {
-        await new Promise((r) => setTimeout(r, 3000));
-        available = (await gateway.getBalances()).gateway.available;
-      }
-    };
-  } else {
-    mockSettlement = new MockSettlement();
-  }
+  if (RAIL !== "gateway") mockSettlement = new MockSettlement();
 
   startScheduler();
   server.once("error", (err: NodeJS.ErrnoException) => {
@@ -1112,12 +1077,59 @@ async function start() {
     }
     throw err;
   });
+  // Open the port FIRST so the deploy health check (/stats) answers immediately.
+  // The gateway rail is brought up afterwards — so a Circle/RPC/key hiccup can
+  // never stop the process from binding and passing the health check.
   server.listen(PORT, () => {
     const custody = config.walletCustody === "circle" ? "circle-MPC" : "local-key";
     console.log(`\n  🟢 Foreman engine API → http://localhost:${PORT}   rail: ${RAIL} · custody: ${custody}`);
     console.log(`     crew: ${registry.members.length} · credit: score-based 10–50% · standing orders: on · persist: on · auth: SIWE`);
     console.log(`     GET /stats /crew /activity /history /account /orders /events   POST /run /delegate /orders /account/* /auth/*\n`);
   });
+
+  if (RAIL === "gateway") {
+    // Bring the payment rail up in the background. If it throws (bad key, RPC
+    // down, Circle misconfig), the API stays up and payments are simply disabled
+    // until it's fixed — the deploy no longer dies on a rail-init error.
+    try {
+      const { startCrewServer } = await import("./gateway/crewServer");
+      const { createForemanGateway } = await import("./gateway/foreman");
+      const { createForemanGatewayMPC } = await import("./gateway/foremanMpc");
+      const { circleCustodyReady } = await import("./gateway/circleSigner");
+      const { gatewayHire } = await import("./gateway/hirer");
+      const { generatePrivateKey } = await import("viem/accounts");
+
+      const CREW_PORT = PORT + 1;
+      await startCrewServer(registry, CREW_PORT);
+      // Custody switch: Circle MPC treasury (no raw key) when configured, else the
+      // local raw-key wallet. Both satisfy ForemanGateway, so the rail is identical.
+      const useMpc = config.walletCustody === "circle" && circleCustodyReady();
+      const gateway = useMpc
+        ? createForemanGatewayMPC()
+        : createForemanGateway((config.foremanPrivateKey || generatePrivateKey()) as `0x${string}`);
+      if (useMpc) console.log("  🔐 treasury custody: Circle MPC (no raw key signs payments)");
+      foremanAddress = gateway.address as `0x${string}`;
+      gatewayClient = gateway;
+      hireFn = gatewayHire(gateway, `http://localhost:${CREW_PORT}`);
+
+      // Keep enough Gateway balance for a job before each run.
+      beforeRun = async () => {
+        const need = 1_000_000n; // $1.00 headroom
+        let available = (await gateway.getBalances()).gateway.available;
+        if (available >= need) return;
+        broadcast({ type: "log", msg: "💰 topping up Gateway balance…", ts: Date.now() });
+        await gateway.deposit("2");
+        const startedAt = Date.now();
+        while (available < need && Date.now() - startedAt < 90_000) {
+          await new Promise((r) => setTimeout(r, 3000));
+          available = (await gateway.getBalances()).gateway.available;
+        }
+      };
+      console.log(`  💸 gateway rail ready · treasury ${foremanAddress}`);
+    } catch (e) {
+      console.error(`  ⚠ gateway rail init failed — API is up, payments disabled until fixed: ${(e as Error).message}`);
+    }
+  }
 }
 
 void start();
