@@ -1,7 +1,8 @@
 # Foreman engine — the ONE server (HTTP API on $PORT + internal crew server on $PORT+1).
 # Runs the gateway rail (real USDC settlement on Arc via Circle Gateway).
 # tsx runs the TypeScript directly — no build step.
-FROM node:20-slim
+# Node 22+ is required by @circle-fin/developer-controlled-wallets (engines: >=22).
+FROM node:22-slim
 
 WORKDIR /app
 
