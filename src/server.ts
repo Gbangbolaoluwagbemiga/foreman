@@ -397,6 +397,13 @@ async function handleRun(goal: string, budgetUsdc: number, user?: string) {
       broadcast({ type: "log", msg: `🛑 DECLINED: ${c.reason}.`, ts: Date.now() });
       return;
     }
+  } else if (config.adminAddress && acct(config.adminAddress).suspended) {
+    // Global kill switch: an account-less (anonymous) run still spends the
+    // treasury, so the owner's kill switch must halt it too.
+    const reason = "the owner's kill switch is on — Foreman is paused";
+    broadcast({ type: "declined", reason, goal, budgetUsdc, ts: Date.now() });
+    broadcast({ type: "log", msg: `🛑 DECLINED: ${reason}.`, ts: Date.now() });
+    return;
   }
   running = true;
   broadcast({ type: "job-start", goal, budgetUsdc, ts: Date.now() });
@@ -881,10 +888,16 @@ const server = http.createServer((req, res) => {
           // Spending from an account requires proof: an API key (headless agents)
           // or a SIWE session. Only anonymous, account-less runs are unauthenticated.
           const owner = agentOwner(req);
+          const tok = bearer(req);
           let u: string | undefined;
           if (owner) {
             if (requested && requested !== owner) return json({ error: "your API key does not own that account" }, 403);
             u = owner;
+          } else if (tok) {
+            // A key was supplied but didn't resolve (revoked, or signed with an old
+            // AUTH_SECRET). Reject it — never silently fall through to an anonymous
+            // run, which would bypass the owner's caps and kill switch.
+            return json({ error: "invalid or revoked API key — re-mint one in the Foreman app and update FOREMAN_API_KEY" }, 401);
           } else if (requested) {
             return json({ error: "an API key is required to delegate on behalf of an account — mint one in the Foreman app" }, 401);
           }
