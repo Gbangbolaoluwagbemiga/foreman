@@ -21,6 +21,7 @@ export function ForemanWallet() {
   const [mounted, setMounted] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
   const [note, setNote] = useState("");
+  const [withdrawTx, setWithdrawTx] = useState<string | null>(null);
   const [att, setAtt] = useState<{ state: "idle" | "checking" | "ok" | "fail"; attester?: string }>({ state: "idle" });
   const fundedAmt = useRef(0);
   const reportedTx = useRef<string | null>(null);
@@ -113,9 +114,11 @@ export function ForemanWallet() {
     const max = account?.balance ?? 0;
     if (amt <= 0) return setNote("Enter an amount.");
     if (amt > max) return setNote(`You can withdraw at most ${max.toFixed(2)} USDC (your balance).`);
+    if (!address) return setNote("Connect your wallet first.");
     setWithdrawing(true);
     try {
-      const r = await withdrawForeman(String(amt));
+      const r = await withdrawForeman(address, String(amt));
+      setWithdrawTx(r.tx ?? null);
       setNote(`Withdrew ${r.withdrew} USDC → your wallet`);
       refreshAccount();
     } catch (e) {
@@ -232,6 +235,11 @@ export function ForemanWallet() {
 
       {(note || (error && isConnected)) && (
         <div className="mt-2 text-xs text-warn">⚠ {note || error?.message.split("\n")[0].slice(0, 80)}</div>
+      )}
+      {withdrawTx && (
+        <div className="mt-1 text-xs text-accent">
+          withdrawn ✓ <a href={`${ARCSCAN}/tx/${withdrawTx}`} target="_blank" rel="noreferrer" className="hover:underline">view on Arcscan ↗</a>
+        </div>
       )}
       {isSuccess && txHash && (
         <div className="mt-2 text-xs text-accent">

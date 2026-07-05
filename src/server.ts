@@ -224,6 +224,7 @@ let gatewayClient:
       getUsdcBalance: () => Promise<{ formatted: string }>;
       getBalances: () => Promise<{ gateway: { formattedAvailable: string } }>;
       withdraw: (amount: string) => Promise<{ formattedAmount: string }>;
+      transferUsdc?: (to: string, amount: string) => Promise<{ hash: string; formattedAmount: string }>;
       getTransferById: (id: string) => Promise<TransferRecord>;
     }
   | undefined;
@@ -654,10 +655,23 @@ const server = http.createServer((req, res) => {
       if (!gatewayClient) return json({ error: "withdraw is only available on the gateway rail" }, 400);
       void (async () => {
         try {
-          const { amount } = JSON.parse(body || "{}");
-          const r = await gatewayClient!.withdraw(String(amount || "0"));
-          broadcast({ type: "log", msg: `🏧 Withdrew ${r.formattedAmount} USDC from Gateway → agent wallet`, ts: Date.now() });
-          json({ ok: true, withdrew: r.formattedAmount });
+          const { user, amount } = JSON.parse(body || "{}");
+          if (!/^0x[0-9a-fA-F]{40}$/.test(String(user ?? ""))) return json({ error: "valid user address required" }, 400);
+          if (!ownsAccount(req, String(user))) return json({ error: "verify wallet ownership first" }, 401);
+          const amt = Number(amount);
+          if (!Number.isFinite(amt) || amt <= 0) return json({ error: "amount must be positive" }, 400);
+          const a = acct(String(user));
+          const balance = Math.max(0, Number((a.deposited - a.spent).toFixed(6)));
+          if (amt > balance) return json({ error: `You can withdraw at most ${balance.toFixed(2)} USDC (your balance).` }, 400);
+          if (!gatewayClient!.transferUsdc) return json({ error: "withdraw is not supported on this rail" }, 400);
+          // Real USDC from the MPC treasury back to the owner's own wallet.
+          const r = await gatewayClient!.transferUsdc(String(user), String(amt));
+          // Debit the ledger so the balance drops by exactly what left the treasury.
+          a.deposited = Number((a.deposited - amt).toFixed(6));
+          saveState();
+          broadcast({ type: "log", msg: `🏧 Withdrew ${r.formattedAmount} USDC → ${String(user).slice(0, 6)}…${String(user).slice(-4)}`, ts: Date.now() });
+          broadcast({ type: "account", account: accountView(String(user)), ts: Date.now() });
+          json({ ok: true, withdrew: r.formattedAmount, tx: r.hash });
         } catch (e) {
           json({ error: (e as Error).message }, 500);
         }

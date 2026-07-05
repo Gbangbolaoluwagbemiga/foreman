@@ -219,15 +219,15 @@ export interface ForemanInfo {
 }
 export const getForeman = () => get<ForemanInfo>("/foreman");
 
-export async function withdrawForeman(amount: string) {
+export async function withdrawForeman(user: string, amount: string) {
   const r = await fetch(`${ENGINE}/foreman/withdraw`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ amount }),
+    headers: { "Content-Type": "application/json", ...authHeader() },
+    body: JSON.stringify({ user, amount }),
   });
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body.error ?? `withdraw failed (${r.status})`);
-  return body as { ok: boolean; withdrew: string };
+  return body as { ok: boolean; withdrew: string; tx?: string };
 }
 
 export const getStats = () => get<Stats>("/stats");

@@ -26,6 +26,9 @@ export interface ForemanGateway {
   getTransferById(id: string): Promise<TransferResponse>;
   deposit(amount: string): Promise<{ formattedAmount: string }>;
   withdraw(amount: string): Promise<{ formattedAmount: string }>;
+  /** MPC-signed plain-USDC transfer from the treasury wallet to any address.
+   *  Optional so the raw library `GatewayClient` still satisfies this interface. */
+  transferUsdc?(to: string, amount: string): Promise<{ hash: string; formattedAmount: string }>;
 }
 
 const GATEWAY_WALLET_ABI = [
@@ -269,11 +272,37 @@ export function createForemanGatewayMPC(): ForemanGateway {
     return { formattedAmount: amount };
   }
 
+  // Plain USDC out of the treasury wallet (not the Gateway pot) — this is how a
+  // user gets their deposited balance back to their own wallet. MPC-signed, so
+  // no raw key ever touches it.
+  async function transferUsdc(to: string, amount: string): Promise<{ hash: string; formattedAmount: string }> {
+    const value = parseUnits(amount, 6);
+    const bal = (await reader.publicClient.readContract({
+      address: chainConfig.usdc,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [address],
+    })) as bigint;
+    if (bal < value)
+      throw new Error(`Insufficient treasury balance. Have: ${formatUnits(bal, 6)}, Need: ${amount}`);
+    const hash = await signer.walletClient.writeContract({
+      chain: reader.publicClient.chain,
+      account: address,
+      address: chainConfig.usdc,
+      abi: erc20Abi,
+      functionName: "transfer",
+      args: [to as `0x${string}`, value],
+    });
+    await reader.publicClient.waitForTransactionReceipt({ hash });
+    return { hash, formattedAmount: amount };
+  }
+
   return {
     address,
     pay,
     deposit,
     withdraw,
+    transferUsdc,
     getBalances: (addr) => reader.getBalances((addr as `0x${string}`) ?? address),
     getUsdcBalance: (addr) => reader.getUsdcBalance((addr as `0x${string}`) ?? address),
     searchTransfers: (params) => reader.searchTransfers(params),
