@@ -62,7 +62,17 @@ export function ForemanWallet() {
   useEffect(() => {
     if (isSuccess && txHash && address && reportedTx.current !== txHash && fundedAmt.current > 0) {
       reportedTx.current = txHash;
-      reportDeposit(address, fundedAmt.current).then(setAccount).catch(() => {});
+      reportDeposit(address, fundedAmt.current)
+        .then(setAccount)
+        .catch((e) => {
+          const msg = (e as Error).message;
+          // On-chain transfer already succeeded; only the ledger credit failed.
+          setNote(
+            /ownership|verify/i.test(msg)
+              ? "Funds sent on-chain ✓ but your session expired — click “verify” again, then Fund once more to credit your balance."
+              : `Funds sent on-chain, but crediting failed: ${msg}`,
+          );
+        });
     }
   }, [isSuccess, txHash, address]);
 

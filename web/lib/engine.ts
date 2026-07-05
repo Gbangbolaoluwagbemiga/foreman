@@ -386,7 +386,15 @@ export async function reportDeposit(user: string, amount: number): Promise<Accou
     headers: { "Content-Type": "application/json", ...authHeader() },
     body: JSON.stringify({ user, amount }),
   });
-  return r.json();
+  const body = await r.json().catch(() => ({}));
+  // A stale session (e.g. the engine's AUTH_SECRET changed) makes this 401 with
+  // "verify wallet ownership first". Clear it so the UI flips back to unverified
+  // and prompts a fresh sign-in, instead of storing an error object as the account.
+  if (!r.ok) {
+    if (r.status === 401) clearSession();
+    throw new Error((body as { error?: string }).error ?? `deposit failed (${r.status})`);
+  }
+  return body as Account;
 }
 
 // ── Standing orders: autonomous recurring jobs funded by the card ──
