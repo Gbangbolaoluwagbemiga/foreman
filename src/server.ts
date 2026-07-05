@@ -1131,6 +1131,20 @@ function startScheduler() {
 async function start() {
   loadRegistered();
   loadState();
+  // Persistence diagnostic — the Railway logs now show whether STATE_FILE's dir
+  // is a real mounted volume (survives redeploys) or ephemeral (wiped each
+  // deploy), plus exactly what was restored. Removes all guesswork.
+  try {
+    const dir = path.dirname(STATE_FILE);
+    fs.mkdirSync(dir, { recursive: true });
+    const probe = path.join(dir, ".write-probe");
+    fs.writeFileSync(probe, String(Date.now()));
+    fs.rmSync(probe);
+    const had = fs.existsSync(STATE_FILE);
+    console.log(`  💾 persistence: ${dir} · writable=yes · state.json ${had ? "FOUND" : "absent (fresh start)"} · restored ${accounts.size} account(s), ${stats.jobs} job(s), ${ledger.length} payment(s)`);
+  } catch (e) {
+    console.warn(`  ⚠ persistence: ${path.dirname(STATE_FILE)} is NOT writable — data will be LOST on redeploy. Mount a Railway volume here. (${(e as Error).message})`);
+  }
   // Flush state on shutdown so nothing in the debounce window is lost.
   const flush = () => {
     if (saveTimer) clearTimeout(saveTimer);
