@@ -9,46 +9,74 @@ import type { ReactNode } from "react";
  * turned into real elements (as React nodes, so no HTML injection / XSS risk).
  */
 export function Rendered({ text }: { text: string }) {
-  const blocks = text.split(/\n{2,}|\n(?=#{1,3}\s)|\n(?=!\[)/).map((b) => b.trim()).filter(Boolean);
-  return (
-    <div className="space-y-3">
-      {blocks.map((b, i) => {
-        const img = b.match(/^!\[[^\]]*\]\(([^)]+)\)/);
-        if (img) return <DownloadableImage key={i} src={img[1]!} />;
+  // Line-level parse — a single block often mixes a heading, bullets, and a
+  // trailing paragraph, so we can't assume any block is homogeneous.
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const out: ReactNode[] = [];
+  let para: string[] = []; // buffer of consecutive plain lines
+  let list: { ordered: boolean; items: string[] } | null = null; // buffer of consecutive bullets
 
-        const h = b.match(/^(#{1,6})\s+(.*)$/);
-        if (h) return <h4 key={i} className="text-sm font-semibold text-ink">{renderInline(h[2]!)}</h4>;
+  const flushPara = () => {
+    if (!para.length) return;
+    const buf = para;
+    out.push(
+      <p key={`p${out.length}`} className="text-sm leading-relaxed text-ink/80">
+        {buf.map((l, j) => (
+          <span key={j}>
+            {renderInline(l)}
+            {j < buf.length - 1 && <br />}
+          </span>
+        ))}
+      </p>,
+    );
+    para = [];
+  };
+  const flushList = () => {
+    if (!list) return;
+    const { ordered, items } = list;
+    const cls = "space-y-1 pl-5 text-sm text-ink/80 marker:text-muted";
+    out.push(
+      ordered ? (
+        <ol key={`l${out.length}`} className={`list-decimal ${cls}`}>
+          {items.map((it, j) => <li key={j}>{renderInline(it)}</li>)}
+        </ol>
+      ) : (
+        <ul key={`l${out.length}`} className={`list-disc ${cls}`}>
+          {items.map((it, j) => <li key={j}>{renderInline(it)}</li>)}
+        </ul>
+      ),
+    );
+    list = null;
+  };
+  const flush = () => { flushPara(); flushList(); };
 
-        // A block whose every line is a bullet / numbered item → a list.
-        const lines = b.split("\n");
-        if (lines.every((l) => /^\s*(?:[-*+]|\d+[.)])\s+/.test(l))) {
-          const ordered = /^\s*\d+[.)]\s+/.test(lines[0]!);
-          const items = lines.map((l) => l.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, ""));
-          return ordered ? (
-            <ol key={i} className="list-decimal space-y-1 pl-5 text-sm text-ink/80 marker:text-muted">
-              {items.map((it, j) => <li key={j}>{renderInline(it)}</li>)}
-            </ol>
-          ) : (
-            <ul key={i} className="list-disc space-y-1 pl-5 text-sm text-ink/80 marker:text-muted">
-              {items.map((it, j) => <li key={j}>{renderInline(it)}</li>)}
-            </ul>
-          );
-        }
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (!line.trim()) { flush(); continue; } // blank line ends the current block
 
-        // Plain paragraph — keep single line breaks, render inline formatting per line.
-        return (
-          <p key={i} className="text-sm leading-relaxed text-ink/80">
-            {lines.map((l, j) => (
-              <span key={j}>
-                {renderInline(l)}
-                {j < lines.length - 1 && <br />}
-              </span>
-            ))}
-          </p>
-        );
-      })}
-    </div>
-  );
+    const img = line.match(/^\s*!\[[^\]]*\]\(([^)]+)\)\s*$/);
+    if (img) { flush(); out.push(<DownloadableImage key={`i${out.length}`} src={img[1]!} />); continue; }
+
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) { flush(); out.push(<h4 key={`h${out.length}`} className="mt-1 text-sm font-semibold text-ink">{renderInline(h[2]!)}</h4>); continue; }
+
+    const bullet = line.match(/^\s*(?:[-*+]|(\d+)[.)])\s+(.*)$/);
+    if (bullet) {
+      const ordered = bullet[1] !== undefined;
+      flushPara();
+      if (list && list.ordered !== ordered) flushList();
+      if (!list) list = { ordered, items: [] };
+      list.items.push(bullet[2]!);
+      continue;
+    }
+
+    // plain text line
+    flushList();
+    para.push(line);
+  }
+  flush();
+
+  return <div className="space-y-3">{out}</div>;
 }
 
 /**
